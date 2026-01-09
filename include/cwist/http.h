@@ -1,8 +1,8 @@
 #ifndef __CWIST_HTTP_H__
 #define __CWIST_HTTP_H__
 
-#include <cwistaw/smartstring.h>
-#include <cwistaw/err/cwist_err.h>
+#include <cwist/sstring.h>
+#include <cwist/err/cwist_err.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 
@@ -35,26 +35,28 @@ typedef enum cwist_http_status_t {
 
 // Linked list for headers to handle multiple headers easily
 typedef struct cwist_http_header_node {
-    smartstring *key;
-    smartstring *value;
+    cwist_sstring *key;
+    cwist_sstring *value;
     struct cwist_http_header_node *next;
 } cwist_http_header_node;
 
 typedef struct cwist_http_request {
     cwist_http_method_t method;
-    smartstring *path;        // e.g., "/users/1"
-    smartstring *query;       // e.g., "active=true" (parsed later)
-    smartstring *version;     // e.g., "HTTP/1.1"
+    cwist_sstring *path;        // e.g., "/users/1"
+    cwist_sstring *query;       // e.g., "active=true" (parsed later)
+    cwist_sstring *version;     // e.g., "HTTP/1.1"
     cwist_http_header_node *headers;
-    smartstring *body;
+    cwist_sstring *body;
+    bool keep_alive;
 } cwist_http_request;
 
 typedef struct cwist_http_response {
-    smartstring *version;     // e.g., "HTTP/1.1"
+    cwist_sstring *version;     // e.g., "HTTP/1.1"
     cwist_http_status_t status_code;
-    smartstring *status_text; // e.g., "OK"
+    cwist_sstring *status_text; // e.g., "OK"
     cwist_http_header_node *headers;
-    smartstring *body;
+    cwist_sstring *body;
+    bool keep_alive;
 } cwist_http_response;
 
 /* --- API Functions --- */

@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <cjson/cJSON.h>
 
-struct smartstring;
+struct cwist_sstring;
 
 typedef enum cwist_errtype_t {
   // signed int errcodes
@@ -60,7 +60,7 @@ typedef struct __prim_cwist_error_t {
 #if (defined(__clang__) || defined(__GNUC__)) && defined(USE_128BIT_ERRCODE)
   int64_t err_i128;
 #endif
-  struct smartstring *err_string;
+  struct cwist_sstring *err_string;
   cJSON       *err_json;
 
 } __prim_cwist_error_t;
@@ -73,4 +73,3 @@ __prim_cwist_error_t error;
 /* FUNCITONS */
 cwist_error_t make_error(cwist_errtype_t type);
 #endif
-

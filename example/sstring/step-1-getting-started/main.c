@@ -1,32 +1,32 @@
 #include <stdio.h>
-#include <cwistaw/smartstring.h>
+#include <cwist/sstring.h>
 
 int main() {
-    printf("=== SmartString Getting Started ===\n");
+    printf("=== SString Getting Started ===\n");
 
-    // 1. Create a smartstring instance
-    smartstring *s = smartstring_create();
+    // 1. Create a cwist_sstring instance
+    cwist_sstring *s = cwist_sstring_create();
     if (!s) {
-        fprintf(stderr, "Failed to create smartstring\n");
+        fprintf(stderr, "Failed to create cwist_sstring\n");
         return 1;
     }
 
     // 2. Assign some data (with leading/trailing spaces)
     printf("\n[Assign]\n");
-    const char *initial_text = "   Hello, SmartString!   ";
+    const char *initial_text = "   Hello, SString!   ";
     printf("Original text: '%s'\n", initial_text);
-    s->assign(s, (char *)initial_text);
+    cwist_sstring_assign(s, (char *)initial_text);
 
     // 3. Trim the string
     printf("\n[Trim]\n");
-    s->trim(s);
+    cwist_sstring_trim(s);
     printf("Trimmed text:  '%s'\n", s->data);
 
     // 4. Seek (Extract substring)
     printf("\n[Seek]\n");
     char buffer[64];
-    // Let's skip "Hello, " (7 chars) to get "SmartString!"
-    if (s->seek(s, buffer, 7).errtype == CWIST_ERR_INT8) { 
+    // Let's skip "Hello, " (7 chars) to get "SString!"
+    if (cwist_sstring_seek(s, buffer, 7).errtype == CWIST_ERR_INT8) { 
         printf("Seek(7):       '%s'\n", buffer);
     } else {
         printf("Seek failed!\n");
@@ -38,7 +38,7 @@ int main() {
     
     // Resize to a smaller size (truncate)
     // Warning: Data loss expected if new size < current length
-    cwist_error_t err = s->change_size(s, 5, true); // true = allow blow data
+    cwist_error_t err = cwist_sstring_change_size(s, 5, true); // true = allow blow data
     if (err.errtype == CWIST_ERR_INT8) {
         printf("Resized to 5:  '%s'\n", s->data);
     } else {
@@ -46,7 +46,7 @@ int main() {
     }
 
     // 6. Clean up
-    smartstring_destroy(s);
+    cwist_sstring_destroy(s);
     printf("\n=== Done ===\n");
 
     return 0;

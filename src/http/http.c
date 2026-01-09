@@ -1,20 +1,28 @@
-#include <cwistaw/http.h>
-#include <cwistaw/smartstring.h>
-#include <cwistaw/err/cwist_err.h>
+#include <cwist/http.h>
+#include <cwist/sstring.h>
+#include <cwist/err/cwist_err.h>
 
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <strings.h>
 #include <errno.h>
 
 #include <sys/types.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <pthread.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#ifdef __linux__
+#include <sys/epoll.h>
+#endif
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
+#include <sys/event.h>
+#endif
 
 const int CWIST_CREATE_SOCKET_FAILED     = -1;
 const int CWIST_HTTP_UNAVAILABLE_ADDRESS = -2;
@@ -61,12 +69,12 @@ cwist_error_t cwist_http_header_add(cwist_http_header_node **head, const char *k
         return err;
     }
 
-    node->key = smartstring_create();
-    node->value = smartstring_create();
+    node->key = cwist_sstring_create();
+    node->value = cwist_sstring_create();
     node->next = NULL;
 
-    smartstring_assign(node->key, (char *)key);
-    smartstring_assign(node->value, (char *)value);
+    cwist_sstring_assign(node->key, (char *)key);
+    cwist_sstring_assign(node->value, (char *)value);
 
     node->next = *head;
     *head = node;
@@ -91,11 +99,37 @@ void cwist_http_header_free_all(cwist_http_header_node *head) {
     cwist_http_header_node *curr = head;
     while (curr) {
         cwist_http_header_node *next = curr->next;
-        smartstring_destroy(curr->key);
-        smartstring_destroy(curr->value);
+        cwist_sstring_destroy(curr->key);
+        cwist_sstring_destroy(curr->value);
         free(curr);
         curr = next;
     }
+}
+
+static bool header_key_is_connection(const char *key) {
+    if (!key) return false;
+    return strcasecmp(key, "connection") == 0;
+}
+
+static bool header_value_is_close(const char *value) {
+    if (!value) return false;
+    return strcasecmp(value, "close") == 0;
+}
+
+static bool header_value_is_keep_alive(const char *value) {
+    if (!value) return false;
+    return strcasecmp(value, "keep-alive") == 0;
+}
+
+static bool headers_have_connection(cwist_http_header_node *head) {
+    cwist_http_header_node *curr = head;
+    while (curr) {
+        if (curr->key && curr->key->data && header_key_is_connection(curr->key->data)) {
+            return true;
+        }
+        curr = curr->next;
+    }
+    return false;
 }
 
 /* --- Request Lifecycle --- */
@@ -105,25 +139,26 @@ cwist_http_request *cwist_http_request_create(void) {
     if (!req) return NULL;
 
     req->method = CWIST_HTTP_GET; // Default
-    req->path = smartstring_create();
-    req->query = smartstring_create();
-    req->version = smartstring_create();
+    req->path = cwist_sstring_create();
+    req->query = cwist_sstring_create();
+    req->version = cwist_sstring_create();
     req->headers = NULL;
-    req->body = smartstring_create();
+    req->body = cwist_sstring_create();
+    req->keep_alive = true;
 
     // Defaults
-    smartstring_assign(req->version, "HTTP/1.1");
-    smartstring_assign(req->path, "/");
+    cwist_sstring_assign(req->version, "HTTP/1.1");
+    cwist_sstring_assign(req->path, "/");
 
     return req;
 }
 
 void cwist_http_request_destroy(cwist_http_request *req) {
     if (req) {
-        smartstring_destroy(req->path);
-        smartstring_destroy(req->query);
-        smartstring_destroy(req->version);
-        smartstring_destroy(req->body);
+        cwist_sstring_destroy(req->path);
+        cwist_sstring_destroy(req->query);
+        cwist_sstring_destroy(req->version);
+        cwist_sstring_destroy(req->body);
         cwist_http_header_free_all(req->headers);
         free(req);
     }
@@ -135,24 +170,25 @@ cwist_http_response *cwist_http_response_create(void) {
     cwist_http_response *res = (cwist_http_response *)malloc(sizeof(cwist_http_response));
     if (!res) return NULL;
 
-    res->version = smartstring_create();
+    res->version = cwist_sstring_create();
     res->status_code = CWIST_HTTP_OK;
-    res->status_text = smartstring_create();
+    res->status_text = cwist_sstring_create();
     res->headers = NULL;
-    res->body = smartstring_create();
+    res->body = cwist_sstring_create();
+    res->keep_alive = true;
 
     // Defaults
-    smartstring_assign(res->version, "HTTP/1.1");
-    smartstring_assign(res->status_text, "OK");
+    cwist_sstring_assign(res->version, "HTTP/1.1");
+    cwist_sstring_assign(res->status_text, "OK");
 
     return res;
 }
 
 void cwist_http_response_destroy(cwist_http_response *res) {
     if (res) {
-        smartstring_destroy(res->version);
-        smartstring_destroy(res->status_text);
-        smartstring_destroy(res->body);
+        cwist_sstring_destroy(res->version);
+        cwist_sstring_destroy(res->status_text);
+        cwist_sstring_destroy(res->body);
         cwist_http_header_free_all(res->headers);
         free(res);
     }
@@ -186,8 +222,15 @@ cwist_http_request *cwist_http_parse_request(const char *raw_request) {
     char *version_str = strtok(NULL, " ");
     
     if (method_str) req->method = cwist_http_string_to_method(method_str);
-    if (path_str) smartstring_assign(req->path, path_str);
-    if (version_str) smartstring_assign(req->version, version_str);
+    if (path_str) cwist_sstring_assign(req->path, path_str);
+    if (version_str) {
+        cwist_sstring_assign(req->version, version_str);
+        if (strcmp(version_str, "HTTP/1.1") == 0) {
+            req->keep_alive = true;
+        } else {
+            req->keep_alive = false;
+        }
+    }
     
     free(request_line);
 
@@ -214,6 +257,13 @@ cwist_http_request *cwist_http_parse_request(const char *raw_request) {
                 while (*value == ' ') value++; // Trim leading space
                 
                 cwist_http_header_add(&req->headers, key, value);
+                if (header_key_is_connection(key)) {
+                    if (header_value_is_close(value)) {
+                        req->keep_alive = false;
+                    } else if (header_value_is_keep_alive(value)) {
+                        req->keep_alive = true;
+                    }
+                }
             }
             free(header_line);
         }
@@ -223,7 +273,7 @@ cwist_http_request *cwist_http_parse_request(const char *raw_request) {
 
     // 3. Body
     if (*line_start) {
-        smartstring_assign(req->body, (char*)line_start);
+        cwist_sstring_assign(req->body, (char*)line_start);
     }
 
     return req;
@@ -237,7 +287,7 @@ cwist_error_t cwist_http_send_response(int client_fd, cwist_http_response *res) 
         return err;
     }
 
-    smartstring *response_str = smartstring_create();
+    cwist_sstring *response_str = cwist_sstring_create();
     
     // Status Line
     char status_line[256];
@@ -245,26 +295,34 @@ cwist_error_t cwist_http_send_response(int client_fd, cwist_http_response *res) 
              res->version->data ? res->version->data : "HTTP/1.1", 
              res->status_code, 
              res->status_text->data ? res->status_text->data : "OK");
-    smartstring_append(response_str, status_line);
+    cwist_sstring_append(response_str, status_line);
     
     // Headers
     cwist_http_header_node *curr = res->headers;
     while (curr) {
         if (curr->key->data && curr->value->data) {
-            smartstring_append(response_str, curr->key->data);
-            smartstring_append(response_str, ": ");
-            smartstring_append(response_str, curr->value->data);
-            smartstring_append(response_str, "\r\n");
+            cwist_sstring_append(response_str, curr->key->data);
+            cwist_sstring_append(response_str, ": ");
+            cwist_sstring_append(response_str, curr->value->data);
+            cwist_sstring_append(response_str, "\r\n");
         }
         curr = curr->next;
     }
+
+    if (!headers_have_connection(res->headers)) {
+        if (res->keep_alive) {
+            cwist_sstring_append(response_str, "Connection: keep-alive\r\n");
+        } else {
+            cwist_sstring_append(response_str, "Connection: close\r\n");
+        }
+    }
     
     // End of headers
-    smartstring_append(response_str, "\r\n");
+    cwist_sstring_append(response_str, "\r\n");
     
     // Body
     if (res->body->data) {
-        smartstring_append(response_str, res->body->data);
+        cwist_sstring_append(response_str, res->body->data);
     }
     
     // Send
@@ -275,7 +333,7 @@ cwist_error_t cwist_http_send_response(int client_fd, cwist_http_response *res) 
         err.error.err_i16 = 0;
     }
     
-    smartstring_destroy(response_str);
+    cwist_sstring_destroy(response_str);
     return err;
 }
 
@@ -345,6 +403,31 @@ int cwist_make_socket_ipv4(struct sockaddr_in *sockv4, const char *address, uint
   return server_fd;
 }
 
+struct thread_payload {
+    int client_fd;
+    void (*handler_func)(int);
+};
+
+static void *thread_handler(void *arg) {
+    struct thread_payload *payload = (struct thread_payload *)arg;
+    int client_fd = payload->client_fd;
+    void (*handler_func)(int) = payload->handler_func;
+    free(payload);
+    handler_func(client_fd);
+    return NULL;
+}
+
+static void handle_client_forking(int client_fd, void (*handler_func)(int)) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        handler_func(client_fd);
+        close(client_fd);
+        _exit(0);
+    } else if (pid > 0) {
+        close(client_fd);
+    }
+}
+
 cwist_error_t cwist_accept_socket(int server_fd, struct sockaddr *sockv4, void (*handler_func)(int client_fd)) {
   int client_fd = -1;
   struct sockaddr_in peer_addr;
@@ -378,4 +461,122 @@ cwist_error_t cwist_accept_socket(int server_fd, struct sockaddr *sockv4, void (
   cwist_error_t err = make_error(CWIST_ERR_INT16);
   err.error.err_i16 = -1;
   return err;
+}
+
+cwist_error_t cwist_http_server_loop(int server_fd, cwist_server_config *config, void (*handler)(int)) {
+    cwist_error_t err = make_error(CWIST_ERR_INT16);
+    if (!config || server_fd < 0 || !handler) {
+        err.error.err_i16 = -1;
+        return err;
+    }
+
+    if (config->use_forking) {
+        while (true) {
+            int client_fd = accept(server_fd, NULL, NULL);
+            if (client_fd < 0) {
+                if (errno == EINTR) continue;
+                err.error.err_i16 = -1;
+                return err;
+            }
+            handle_client_forking(client_fd, handler);
+        }
+    }
+
+    if (config->use_threading) {
+        while (true) {
+            int client_fd = accept(server_fd, NULL, NULL);
+            if (client_fd < 0) {
+                if (errno == EINTR) continue;
+                err.error.err_i16 = -1;
+                return err;
+            }
+            pthread_t thread;
+            struct thread_payload *payload = malloc(sizeof(*payload));
+            if (!payload) {
+                close(client_fd);
+                continue;
+            }
+            payload->client_fd = client_fd;
+            payload->handler_func = handler;
+            if (pthread_create(&thread, NULL, thread_handler, payload) == 0) {
+                pthread_detach(thread);
+            } else {
+                free(payload);
+                close(client_fd);
+            }
+        }
+    }
+
+#ifdef __linux__
+    if (config->use_epoll) {
+        int epoll_fd = epoll_create1(0);
+        if (epoll_fd < 0) {
+            err.error.err_i16 = -1;
+            return err;
+        }
+        struct epoll_event event;
+        event.events = EPOLLIN;
+        event.data.fd = server_fd;
+        if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_fd, &event) < 0) {
+            close(epoll_fd);
+            err.error.err_i16 = -1;
+            return err;
+        }
+
+        while (true) {
+            struct epoll_event events[16];
+            int count = epoll_wait(epoll_fd, events, 16, -1);
+            if (count < 0) {
+                if (errno == EINTR) continue;
+                break;
+            }
+            for (int i = 0; i < count; i++) {
+                if (events[i].data.fd == server_fd) {
+                    int client_fd = accept(server_fd, NULL, NULL);
+                    if (client_fd >= 0) {
+                        handler(client_fd);
+                    }
+                }
+            }
+        }
+        close(epoll_fd);
+    }
+#endif
+
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
+    if (config->use_epoll) {
+        int kqueue_fd = kqueue();
+        if (kqueue_fd < 0) {
+            err.error.err_i16 = -1;
+            return err;
+        }
+        struct kevent change;
+        EV_SET(&change, server_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+        if (kevent(kqueue_fd, &change, 1, NULL, 0, NULL) < 0) {
+            close(kqueue_fd);
+            err.error.err_i16 = -1;
+            return err;
+        }
+
+        while (true) {
+            struct kevent events[16];
+            int count = kevent(kqueue_fd, NULL, 0, events, 16, NULL);
+            if (count < 0) {
+                if (errno == EINTR) continue;
+                break;
+            }
+            for (int i = 0; i < count; i++) {
+                if ((int)events[i].ident == server_fd) {
+                    int client_fd = accept(server_fd, NULL, NULL);
+                    if (client_fd >= 0) {
+                        handler(client_fd);
+                    }
+                }
+            }
+        }
+        close(kqueue_fd);
+    }
+#endif
+
+    return cwist_accept_socket(server_fd, NULL, handler);
 }

@@ -1,18 +1,50 @@
-#include <cwistaw/smartstring.h>
-#include <cwistaw/err/cwist_err.h>
+#include <cwist/sstring.h>
+#include <cwist/err/cwist_err.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 
-/*
-cwist_error_t smartstring_init(smartstring *str) {
+size_t cwist_sstring_get_size(cwist_sstring *str);
+int cwist_sstring_compare_sstring(cwist_sstring *left, const cwist_sstring *right);
+cwist_error_t cwist_sstring_copy_sstring(cwist_sstring *origin, const cwist_sstring *from);
+cwist_error_t cwist_sstring_append_sstring(cwist_sstring *str, const cwist_sstring *from);
 
-}*/
-
-cwist_error_t smartstring_ltrim(smartstring *str) {
+cwist_error_t cwist_sstring_init(cwist_sstring *str) {
     cwist_error_t err = make_error(CWIST_ERR_INT8);
-    err.error.err_i8 = ERR_SMARTSTRING_NULL_STRING;
+    if (!str) {
+        err.error.err_i8 = ERR_SSTRING_NULL_STRING;
+        return err;
+    }
+
+    str->data = NULL;
+    str->size = 0;
+    str->is_fixed = false;
+    str->get_size = cwist_sstring_get_size;
+    str->compare = cwist_sstring_compare_sstring;
+    str->copy = cwist_sstring_copy_sstring;
+    str->append = cwist_sstring_append_sstring;
+
+    err.error.err_i8 = ERR_SSTRING_OKAY;
+    return err;
+}
+
+size_t cwist_sstring_get_size(cwist_sstring *str) {
+    return str ? str->size : 0;
+}
+
+int cwist_sstring_compare_sstring(cwist_sstring *left, const cwist_sstring *right) {
+    if (!left || !left->data) {
+        if (!right || !right->data) return 0;
+        return -1;
+    }
+    if (!right || !right->data) return 1;
+    return strcmp(left->data, right->data);
+}
+
+cwist_error_t cwist_sstring_ltrim(cwist_sstring *str) {
+    cwist_error_t err = make_error(CWIST_ERR_INT8);
+    err.error.err_i8 = ERR_SSTRING_NULL_STRING;
     if (!str || !str->data) return err;
 
     size_t len = strlen(str->data);
@@ -26,19 +58,19 @@ cwist_error_t smartstring_ltrim(smartstring *str) {
         str->size -= start; 
     }
 
-    err.error.err_i8 = ERR_SMARTSTRING_OKAY;
+    err.error.err_i8 = ERR_SSTRING_OKAY;
     return err;                              
 }
 
-cwist_error_t smartstring_rtrim(smartstring *str) {
+cwist_error_t cwist_sstring_rtrim(cwist_sstring *str) {
     cwist_error_t err = make_error(CWIST_ERR_INT8);
-    err.error.err_i8 = ERR_SMARTSTRING_NULL_STRING;
+    err.error.err_i8 = ERR_SSTRING_NULL_STRING;
     if (!str || !str->data) return err; 
 
     size_t len = strlen(str->data);
     
     if (len == 0) {
-      err.error.err_i8 = ERR_SMARTSTRING_ZERO_LENGTH;
+      err.error.err_i8 = ERR_SSTRING_ZERO_LENGTH;
       return err;
     }
 
@@ -50,26 +82,26 @@ cwist_error_t smartstring_rtrim(smartstring *str) {
     
     str->data[end + 1] = '\0';
     
-    err.error.err_i8 = ERR_SMARTSTRING_OKAY;
+    err.error.err_i8 = ERR_SSTRING_OKAY;
     return err;
 }
 
-cwist_error_t smartstring_trim(smartstring *str) {
-    cwist_error_t err = smartstring_rtrim(str);
-    if(err.error.err_i8 != ERR_SMARTSTRING_OKAY) return err;
-    return smartstring_ltrim(str);
+cwist_error_t cwist_sstring_trim(cwist_sstring *str) {
+    cwist_error_t err = cwist_sstring_rtrim(str);
+    if(err.error.err_i8 != ERR_SSTRING_OKAY) return err;
+    return cwist_sstring_ltrim(str);
 }
 
-cwist_error_t smartstring_change_size(smartstring *str, size_t new_size, bool blow_data) {
+cwist_error_t cwist_sstring_change_size(cwist_sstring *str, size_t new_size, bool blow_data) {
     cwist_error_t err = make_error(CWIST_ERR_INT8);
 
     if (!str) {
-      err.error.err_i8 = ERR_SMARTSTRING_NULL_STRING;
+      err.error.err_i8 = ERR_SSTRING_NULL_STRING;
       return err;
     }
 
     if (str->is_fixed) {
-      err.error.err_i8 = ERR_SMARTSTRING_CONSTANT;
+      err.error.err_i8 = ERR_SSTRING_CONSTANT;
       return err;
     }
 
@@ -84,7 +116,7 @@ cwist_error_t smartstring_change_size(smartstring *str, size_t new_size, bool bl
 
     char *new_data = (char *)realloc(str->data, new_size + 1); 
     if (!new_data && new_size > 0) {
-        err.error.err_i8 = ERR_SMARTSTRING_RESIZE_TOO_LARGE;
+        err.error.err_i8 = ERR_SSTRING_RESIZE_TOO_LARGE;
         return err;                                                
     }
 
@@ -100,14 +132,14 @@ cwist_error_t smartstring_change_size(smartstring *str, size_t new_size, bool bl
         str->data[new_size] = '\0';
     }
 
-   err.error.err_i8 = ERR_SMARTSTRING_OKAY;
+   err.error.err_i8 = ERR_SSTRING_OKAY;
    return err;
 }
 
-cwist_error_t smartstring_assign(smartstring *str, char *data) {
+cwist_error_t cwist_sstring_assign(cwist_sstring *str, char *data) {
     if (!str) {
       cwist_error_t err = make_error(CWIST_ERR_INT8);
-      err.error.err_i8 = ERR_SMARTSTRING_NULL_STRING;
+      err.error.err_i8 = ERR_SSTRING_NULL_STRING;
       return err;
     }
     
@@ -121,8 +153,8 @@ cwist_error_t smartstring_assign(smartstring *str, char *data) {
           cJSON_AddStringToObject(err.error.err_json, "err", "string's assigned size is smaller than given data");
 
           
-          cwist_error_t err_resize = smartstring_change_size(str, strlen(str->data), false);
-          if(err_resize.error.err_i8 == ERR_SMARTSTRING_OKAY) {
+          cwist_error_t err_resize = cwist_sstring_change_size(str, strlen(str->data), false);
+          if(err_resize.error.err_i8 == ERR_SSTRING_OKAY) {
             return err_resize;
           } else {
             return err;
@@ -143,21 +175,21 @@ cwist_error_t smartstring_assign(smartstring *str, char *data) {
 
     cJSON_Delete(err.error.err_json); 
     err = make_error(CWIST_ERR_INT8);
-    err.error.err_i8 = ERR_SMARTSTRING_OKAY;
+    err.error.err_i8 = ERR_SSTRING_OKAY;
 
     return err;
 }
 
-cwist_error_t smartstring_append(smartstring *str, const char *data) {
+cwist_error_t cwist_sstring_append(cwist_sstring *str, const char *data) {
     if (!str) {
         cwist_error_t err = make_error(CWIST_ERR_INT8);
-        err.error.err_i8 = ERR_SMARTSTRING_NULL_STRING;
+        err.error.err_i8 = ERR_SSTRING_NULL_STRING;
         return err;
     }
     if (!data) {
         // Appending nothing is success
         cwist_error_t err = make_error(CWIST_ERR_INT8);
-        err.error.err_i8 = ERR_SMARTSTRING_OKAY;
+        err.error.err_i8 = ERR_SSTRING_OKAY;
         return err;
     }
 
@@ -192,63 +224,93 @@ cwist_error_t smartstring_append(smartstring *str, const char *data) {
 
     cJSON_Delete(err.error.err_json);
     err = make_error(CWIST_ERR_INT8);
-    err.error.err_i8 = ERR_SMARTSTRING_OKAY;
+    err.error.err_i8 = ERR_SSTRING_OKAY;
     return err;
 }
 
-cwist_error_t smartstring_seek(smartstring *str, char *substr, int location) {
+cwist_error_t cwist_sstring_append_sstring(cwist_sstring *str, const cwist_sstring *from) {
+    if (!str) {
+        cwist_error_t err = make_error(CWIST_ERR_INT8);
+        err.error.err_i8 = ERR_SSTRING_NULL_STRING;
+        return err;
+    }
+    if (!from) {
+        cwist_error_t err = make_error(CWIST_ERR_INT8);
+        err.error.err_i8 = ERR_SSTRING_OKAY;
+        return err;
+    }
+    return cwist_sstring_append(str, from->data);
+}
+
+cwist_error_t cwist_sstring_seek(cwist_sstring *str, char *substr, int location) {
     cwist_error_t err = make_error(CWIST_ERR_INT8);
     if (!str || !str->data || !substr) {
-      err.error.err_i8 = ERR_SMARTSTRING_NULL_STRING;
+      err.error.err_i8 = ERR_SSTRING_NULL_STRING;
       return err;
     }
     
     size_t len = strlen(str->data);
     if (location < 0 || (size_t)location >= len) {
-      err.error.err_i8 = ERR_SMARTSTRING_OUTOFBOUND;
+      err.error.err_i8 = ERR_SSTRING_OUTOFBOUND;
       return err;
     }
 
     strcpy(substr, str->data + location);
     
-    err.error.err_i8 = ERR_SMARTSTRING_OKAY;
+    err.error.err_i8 = ERR_SSTRING_OKAY;
     return err;
 }
 
-cwist_error_t smartstring_copy(smartstring *origin, char *destination) {
+cwist_error_t cwist_sstring_copy(cwist_sstring *origin, char *destination) {
 
     cwist_error_t err = make_error(CWIST_ERR_INT8);
     if (!origin || !origin->data || !destination) {
-      err.error.err_i8 = ERR_SMARTSTRING_NULL_STRING;
+      err.error.err_i8 = ERR_SSTRING_NULL_STRING;
       return err;
     }
     
     strcpy(destination, origin->data);
     
-    err.error.err_i8 = ERR_SMARTSTRING_OKAY;
+    err.error.err_i8 = ERR_SSTRING_OKAY;
     return err;
 }
 
-smartstring *smartstring_create(void) {
-    smartstring *str = (smartstring *)malloc(sizeof(smartstring));
+cwist_error_t cwist_sstring_copy_sstring(cwist_sstring *origin, const cwist_sstring *from) {
+    if (!origin) {
+        cwist_error_t err = make_error(CWIST_ERR_INT8);
+        err.error.err_i8 = ERR_SSTRING_NULL_STRING;
+        return err;
+    }
+    if (!from) {
+        return cwist_sstring_assign(origin, NULL);
+    }
+    return cwist_sstring_assign(origin, from->data);
+}
+
+cwist_sstring *cwist_sstring_create(void) {
+    cwist_sstring *str = (cwist_sstring *)malloc(sizeof(cwist_sstring));
     if (!str) return NULL;
 
-    memset(str, 0, sizeof(smartstring));
+    memset(str, 0, sizeof(cwist_sstring));
     str->is_fixed = false;
     str->size = 0;
     str->data = NULL; // Initially empty
+    str->get_size = cwist_sstring_get_size;
+    str->compare = cwist_sstring_compare_sstring;
+    str->copy = cwist_sstring_copy_sstring;
+    str->append = cwist_sstring_append_sstring;
 
     return str;
 }
 
-void smartstring_destroy(smartstring *str) {
+void cwist_sstring_destroy(cwist_sstring *str) {
     if (str) {
         if (str->data) free(str->data);
         free(str);
     }
 }
 
-int smartstring_compare(smartstring *str, const char *compare_to) {
+int cwist_sstring_compare(cwist_sstring *str, const char *compare_to) {
     if (!str || !str->data) {
         if (!compare_to) return 0; // Both NULL-ish (empty treated as NULL for comparison?)
         return -1; 
@@ -258,7 +320,7 @@ int smartstring_compare(smartstring *str, const char *compare_to) {
     return strcmp(str->data, compare_to);
 }
 
-smartstring *smartstring_substr(smartstring *str, int start, int length) {
+cwist_sstring *cwist_sstring_substr(cwist_sstring *str, int start, int length) {
     if (!str || !str->data || start < 0 || length < 0) return NULL;
     
     size_t current_len = strlen(str->data);
@@ -269,12 +331,12 @@ smartstring *smartstring_substr(smartstring *str, int start, int length) {
         length = current_len - start;
     }
     
-    smartstring *sub = smartstring_create();
+    cwist_sstring *sub = cwist_sstring_create();
     if (!sub) return NULL;
     
     sub->data = (char *)malloc(length + 1);
     if (!sub->data) {
-        smartstring_destroy(sub);
+        cwist_sstring_destroy(sub);
         return NULL;
     }
     sub->size = length;

@@ -3,17 +3,20 @@ CWIST is a acronym of "C Web development Is Still Trustworthy".
 This aims for modern, and fast C web framework.
 
 == What is going on? ==
-- Smart String (with compare & substr)
+- SString (with compare & substr)
 - Error Codes
 - HTTP Request Parsing
 - HTTP Response Sending
+
+== Notice ==
+- smartstring has been renamed to sstring (see include/cwist/sstring.h and src/sstring/)
 
 == What's next? ==
 - HTTP Handlers
   - Abstract socket handlers
   - Memory-safe easy multiprocessing
 - HTTP Client Support
-- SmartString formatted printing (sprintf)
+- SString formatted printing (sprintf)
 - Robust error handling in parser
 
 == Dependency ==
@@ -30,5 +33,4 @@ This aims for modern, and fast C web framework.
 - Mux Router
 - CORS, HTTPS
 - RestAPI Server
-
 

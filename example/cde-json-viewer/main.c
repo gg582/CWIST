@@ -4,8 +4,8 @@
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <cwistaw/smartstring.h>
-#include <cwistaw/http.h>
+#include <cwist/sstring.h>
+#include <cwist/http.h>
 #include <cjson/cJSON.h>
 
 #define PORT 8080
@@ -21,9 +21,9 @@ const char *MOCK_JSON_INPUT = "{"
     "\"Load\": \"0.01, 0.05, 0.00\""
 "}";
 
-void generate_cde_html(smartstring *html, cJSON *json) {
+void generate_cde_html(cwist_sstring *html, cJSON *json) {
     // 1. Write HTML Header & CSS (CDE Retro Style)
-    smartstring_append(html, 
+    cwist_sstring_append(html, 
         "<!DOCTYPE html>\n<html>\n<head>\n"
         "<title>System Monitor</title>\n"
         "<style>\n"
@@ -65,7 +65,7 @@ void generate_cde_html(smartstring *html, cJSON *json) {
         "</style>\n</head>\n<body>\n");
 
     // 2. Start Window Structure
-    smartstring_append(html, 
+    cwist_sstring_append(html, 
         "<div class=\"cde-window\">\n"
         "  <div class=\"title-bar\"><span>Terminal Info</span><span>[X]</span></div>\n"
         "  <div class=\"content-area\">\n"
@@ -75,16 +75,16 @@ void generate_cde_html(smartstring *html, cJSON *json) {
     cJSON *item = NULL;
     cJSON_ArrayForEach(item, json) {
         if (cJSON_IsString(item)) {
-            smartstring_append(html, "      <tr><td class=\"key\"> ");
-            smartstring_append(html, item->string); // JSON Key
-            smartstring_append(html, "</td><td class=\"value\"> ");
-            smartstring_append(html, item->valuestring); // JSON Value
-            smartstring_append(html, "</td></tr>\n");
+            cwist_sstring_append(html, "      <tr><td class=\"key\"> ");
+            cwist_sstring_append(html, item->string); // JSON Key
+            cwist_sstring_append(html, "</td><td class=\"value\"> ");
+            cwist_sstring_append(html, item->valuestring); // JSON Value
+            cwist_sstring_append(html, "</td></tr>\n");
         }
     }
 
     // 4. Close Tags
-    smartstring_append(html, 
+    cwist_sstring_append(html, 
         "    </table>\n"
         "  </div>\n"
         "</div>\n"
@@ -92,33 +92,33 @@ void generate_cde_html(smartstring *html, cJSON *json) {
 }
 
 void send_response(int client_fd, cwist_http_response *res) {
-    smartstring *raw = smartstring_create();
+    cwist_sstring *raw = cwist_sstring_create();
     
     // Status Line
     char status_line[128];
     snprintf(status_line, 127, "%s %d %s\r\n", res->version->data, res->status_code, res->status_text->data);
-    smartstring_append(raw, status_line);
+    cwist_sstring_append(raw, status_line);
 
     // Headers
     cwist_http_header_node *curr = res->headers;
     while(curr) {
-        smartstring_append(raw, curr->key->data);
-        smartstring_append(raw, ": ");
-        smartstring_append(raw, curr->value->data);
-        smartstring_append(raw, "\r\n");
+        cwist_sstring_append(raw, curr->key->data);
+        cwist_sstring_append(raw, ": ");
+        cwist_sstring_append(raw, curr->value->data);
+        cwist_sstring_append(raw, "\r\n");
         curr = curr->next;
     }
-    smartstring_append(raw, "\r\n"); // End of headers
+    cwist_sstring_append(raw, "\r\n"); // End of headers
 
     // Body
     if(res->body->data) {
-        smartstring_append(raw, res->body->data);
+        cwist_sstring_append(raw, res->body->data);
     }
 
     if (raw->data) {
         send(client_fd, raw->data, strlen(raw->data), 0);
     }
-    smartstring_destroy(raw);
+    cwist_sstring_destroy(raw);
 }
 
 void handle_client(int client_fd) {
@@ -150,7 +150,7 @@ void handle_client(int client_fd) {
         }
     } else {
          res->status_code = CWIST_HTTP_INTERNAL_ERROR;
-         smartstring_assign(res->status_text, "Internal Server Error");
+         cwist_sstring_assign(res->status_text, "Internal Server Error");
     }
 
     send_response(client_fd, res);

@@ -45,13 +45,12 @@
     - Wasted memory if pool is oversized.
     - Complexity in implementing a robust generic pool.
 
-- Garbage Collection (libgc)
+- Session Manager (arena + ref-counted sessions)
   - Pros:
-    - Developer convenience (no use-after-free, no leaks).
+    - Deterministic cleanup via arena reset per request.
+    - Shared long-lived session data via intrusive ref counts.
   - Cons:
-    - Nondeterministic pauses.
-    - Overhead.
-    - Not idiomatic for low-level system C programming.
+    - Requires clear ownership rules for shared sessions.
 
 == Routing Algorithms ==
 - Linear Regex Matching

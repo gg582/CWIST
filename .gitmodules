@@ -1,0 +1,3 @@
+[submodule "lib/cwist_crypto"]
+	path = lib/cwist_crypto
+	url = ../cwist_crypto

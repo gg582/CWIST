@@ -11,9 +11,9 @@
       "lib/cjson/cJSON.o",
       "lib/cjson/cJSON.c"
     ],
-    "directory": "/home/yjlee/cwistaw",
-    "file": "/home/yjlee/cwistaw/lib/cjson/cJSON.c",
-    "output": "/home/yjlee/cwistaw/lib/cjson/cJSON.o"
+    "directory": "/home/yjlee/cwist",
+    "file": "/home/yjlee/cwist/lib/cjson/cJSON.c",
+    "output": "/home/yjlee/cwist/lib/cjson/cJSON.o"
   },
   {
     "arguments": [
@@ -24,11 +24,11 @@
       "-Wextra",
       "-c",
       "-o",
-      "src/smartstring/smartstring.o",
-      "src/smartstring/smartstring.c"
+      "src/sstring/sstring.o",
+      "src/sstring/sstring.c"
     ],
-    "directory": "/home/yjlee/cwistaw",
-    "file": "/home/yjlee/cwistaw/src/smartstring/smartstring.c",
-    "output": "/home/yjlee/cwistaw/src/smartstring/smartstring.o"
+    "directory": "/home/yjlee/cwist",
+    "file": "/home/yjlee/cwist/src/sstring/sstring.c",
+    "output": "/home/yjlee/cwist/src/sstring/sstring.o"
   }
 ]

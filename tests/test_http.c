@@ -1,4 +1,4 @@
-#include <cwistaw/http.h>
+#include <cwist/http.h>
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
@@ -18,6 +18,7 @@ void test_request_lifecycle() {
     assert(req != NULL);
     assert(req->method == CWIST_HTTP_GET);
     assert(strcmp(req->version->data, "HTTP/1.1") == 0);
+    assert(req->keep_alive == true);
 
     cwist_http_header_add(&req->headers, "Content-Type", "application/json");
     cwist_http_header_add(&req->headers, "Host", "example.com");
@@ -26,7 +27,7 @@ void test_request_lifecycle() {
     assert(strcmp(cwist_http_header_get(req->headers, "Content-Type"), "application/json") == 0);
     assert(cwist_http_header_get(req->headers, "Invalid") == NULL);
 
-    smartstring_assign(req->body, "{\"key\": \"value\"}");
+    cwist_sstring_assign(req->body, "{\"key\": \"value\"}");
     assert(strcmp(req->body->data, "{\"key\": \"value\"}") == 0);
 
     cwist_http_request_destroy(req);
@@ -39,8 +40,8 @@ void test_response_lifecycle() {
     assert(res != NULL);
     assert(res->status_code == CWIST_HTTP_OK);
 
-    cwist_http_header_add(&res->headers, "Server", "Cwistaw/0.1");
-    assert(strcmp(cwist_http_header_get(res->headers, "Server"), "Cwistaw/0.1") == 0);
+    cwist_http_header_add(&res->headers, "Server", "Cwist/0.1");
+    assert(strcmp(cwist_http_header_get(res->headers, "Server"), "Cwist/0.1") == 0);
 
     cwist_http_response_destroy(res);
     printf("Passed Response Lifecycle.\n");
@@ -48,7 +49,7 @@ void test_response_lifecycle() {
 
 void test_parse_request() {
     printf("Testing Request Parsing...\n");
-    const char *raw = "POST /api/users HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n\r\n{\"name\":\"test\"}";
+    const char *raw = "POST /api/users HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/json\r\n\r\n{\"name\":\"test\"}";
     
     cwist_http_request *req = cwist_http_parse_request(raw);
     assert(req != NULL);
@@ -60,6 +61,7 @@ void test_parse_request() {
     assert(strcmp(cwist_http_header_get(req->headers, "Content-Type"), "application/json") == 0);
     
     assert(strcmp(req->body->data, "{\"name\":\"test\"}") == 0);
+    assert(req->keep_alive == false);
     
     cwist_http_request_destroy(req);
     printf("Passed Request Parsing.\n");
@@ -75,9 +77,10 @@ void test_send_response() {
 
     cwist_http_response *res = cwist_http_response_create();
     res->status_code = CWIST_HTTP_OK;
-    smartstring_assign(res->status_text, "OK");
+    cwist_sstring_assign(res->status_text, "OK");
     cwist_http_header_add(&res->headers, "Content-Type", "text/plain");
-    smartstring_assign(res->body, "Hello World");
+    cwist_sstring_assign(res->body, "Hello World");
+    res->keep_alive = false;
 
     cwist_http_send_response(sv[0], res);
     
@@ -88,6 +91,7 @@ void test_send_response() {
     // Check key parts (order of headers might vary if implementation changes, but currently it's a stack)
     assert(strstr(buffer, "HTTP/1.1 200 OK\r\n") != NULL);
     assert(strstr(buffer, "Content-Type: text/plain\r\n") != NULL);
+    assert(strstr(buffer, "Connection: close\r\n") != NULL);
     assert(strstr(buffer, "\r\nHello World") != NULL);
 
     cwist_http_response_destroy(res);

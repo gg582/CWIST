@@ -1,5 +1,5 @@
-#include <cwistaw/http.h>
-#include <cwistaw/smartstring.h>
+#include <cwist/http.h>
+#include <cwist/sstring.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,12 +13,13 @@
 // Helper to send a simple error response
 void send_error_response(int client_fd, int code, const char *msg) {
     cwist_http_response *res = cwist_http_response_create();
+    res->keep_alive = req->keep_alive;
     res->status_code = code;
-    smartstring_assign(res->status_text, (char*)msg); // Cast const away safely as we assign copy
+    cwist_sstring_assign(res->status_text, (char*)msg); // Cast const away safely as we assign copy
     
     char body[256];
     snprintf(body, sizeof(body), "{\"error\": \"%s\"}", msg);
-    smartstring_assign(res->body, body);
+    cwist_sstring_assign(res->body, body);
     cwist_http_header_add(&res->headers, "Content-Type", "application/json");
     
     cwist_http_send_response(client_fd, res);
@@ -57,20 +58,20 @@ void handle_client(int client_fd) {
 
     // Prepare Response
     cwist_http_response *res = cwist_http_response_create();
-    cwist_http_header_add(&res->headers, "Server", "Cwistaw-Simple/1.0");
+    cwist_http_header_add(&res->headers, "Server", "Cwist-Simple/1.0");
     cwist_http_header_add(&res->headers, "Connection", "close");
 
     // Routing Logic
     if (strcmp(req->path->data, "/") == 0 && req->method == CWIST_HTTP_GET) {
         res->status_code = CWIST_HTTP_OK;
-        smartstring_assign(res->status_text, "OK");
+        cwist_sstring_assign(res->status_text, "OK");
         cwist_http_header_add(&res->headers, "Content-Type", "text/html");
         
-        smartstring_assign(res->body, 
+        cwist_sstring_assign(res->body, 
             "<html>"
-            "<head><title>Cwistaw Server</title></head>"
+            "<head><title>Cwist Server</title></head>"
             "<body>"
-            "<h1>Hello from Cwistaw!</h1>"
+            "<h1>Hello from Cwist!</h1>"
             "<p>This is a robust, simple example server.</p>"
             "<a href='/health'>Check Health</a> | <a href='/json'>Get JSON</a>"
             "</body>"
@@ -79,25 +80,25 @@ void handle_client(int client_fd) {
     } 
     else if (strcmp(req->path->data, "/health") == 0 && req->method == CWIST_HTTP_GET) {
         res->status_code = CWIST_HTTP_OK;
-        smartstring_assign(res->status_text, "OK");
+        cwist_sstring_assign(res->status_text, "OK");
         cwist_http_header_add(&res->headers, "Content-Type", "application/json");
-        smartstring_assign(res->body, "{\"status\": \"ok\", \"uptime\": \"forever\"}");
+        cwist_sstring_assign(res->body, "{\"status\": \"ok\", \"uptime\": \"forever\"}");
     }
     else if (strcmp(req->path->data, "/echo") == 0 && req->method == CWIST_HTTP_POST) {
         res->status_code = CWIST_HTTP_OK;
-        smartstring_assign(res->status_text, "OK");
+        cwist_sstring_assign(res->status_text, "OK");
         // Echo back content type if present
         char *ct = cwist_http_header_get(req->headers, "Content-Type");
         if (ct) {
             cwist_http_header_add(&res->headers, "Content-Type", ct);
         }
-        smartstring_assign(res->body, req->body->data);
+        cwist_sstring_assign(res->body, req->body->data);
     }
     else {
         res->status_code = CWIST_HTTP_NOT_FOUND;
-        smartstring_assign(res->status_text, "Not Found");
+        cwist_sstring_assign(res->status_text, "Not Found");
         cwist_http_header_add(&res->headers, "Content-Type", "text/plain");
-        smartstring_assign(res->body, "404 - Not Found");
+        cwist_sstring_assign(res->body, "404 - Not Found");
     }
 
     // Send and Clean up

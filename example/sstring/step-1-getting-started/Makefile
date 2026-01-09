@@ -1,9 +1,9 @@
 CC = gcc
-CFLAGS = -I../../../include -I../../../lib -Wall -Wextra -lcjson
+CFLAGS = -I../../../include -I../../../lib -I../../../lib/cjson -Wall -Wextra
 
 # Paths to the object files compiled in the root project
-SMARTSTRING_OBJ = ../../../src/smartstring/smartstring.o
-OBJS = $(SMARTSTRING_OBJ) $(CJSON_OBJ)
+SSTRING_OBJ = ../../../src/sstring/sstring.o
+OBJS = $(SSTRING_OBJ)
 
 TARGET = getting-started
 
