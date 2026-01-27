@@ -15,7 +15,9 @@ SRCS = src/core/sstring/sstring.c \
        src/net/websocket/websocket.c \
        src/net/websocket/ws_utils.c \
        src/core/utils/json_builder.c \
-       src/sys/app/middleware.c
+       src/sys/app/middleware.c \
+       src/core/template/template.c \
+       src/core/html/builder.c
 
 OBJS = $(SRCS:.c=.o)
 LIB_NAME = libcwist.a

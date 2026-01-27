@@ -4,8 +4,8 @@
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <cwist/sstring.h>
-#include <cwist/http.h>
+#include <cwist/core/sstring/sstring.h>
+#include <cwist/net/http/http.h>
 #include <cjson/cJSON.h>
 
 #define PORT 8080

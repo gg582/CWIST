@@ -1,5 +1,5 @@
-#include <cwist/http.h>
-#include <cwist/sstring.h>
+#include <cwist/net/http/http.h>
+#include <cwist/core/sstring/sstring.h>
 
 #include <stdbool.h>
 #include <stdio.h>

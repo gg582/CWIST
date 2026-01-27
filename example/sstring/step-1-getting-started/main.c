@@ -1,5 +1,5 @@
 #include <stdio.h>
-#include <cwist/sstring.h>
+#include <cwist/core/sstring/sstring.h>
 
 int main() {
     printf("=== SString Getting Started ===\n");
