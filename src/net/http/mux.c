@@ -1,6 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
-#include <cwist/mux.h>
-#include <cwist/http.h>
+#include <cwist/net/http/mux.h>
+#include <cwist/net/http/http.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>

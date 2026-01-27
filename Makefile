@@ -1,7 +1,10 @@
+# Compiler and Flags
 CC = gcc
-CFLAGS = -I./include -I./lib -I./lib/cjson -Wall -Wextra -pthread
+# Added -g for debug info, -O2 for optimization (optional, adjust as needed)
+CFLAGS = -I./include -I./lib -I./lib/cjson -Wall -Wextra -pthread -g
 LIBS = -pthread -lcjson -lssl -lcrypto -luriparser -lsqlite3
 
+# Source Files
 SRCS = src/core/sstring/sstring.c \
        src/sys/err/error.c \
        src/net/http/http.c \
@@ -19,17 +22,24 @@ SRCS = src/core/sstring/sstring.c \
        src/core/template/template.c \
        src/core/html/builder.c
 
+# Object Files and Target
 OBJS = $(SRCS:.c=.o)
 LIB_NAME = libcwist.a
 
+# Installation Paths
 PREFIX ?= /usr/local
 LIBDIR = $(PREFIX)/lib
 INCLUDEDIR = $(PREFIX)/include
 
+# --- Build Targets ---
+
 all: $(LIB_NAME)
 
 $(LIB_NAME): $(OBJS)
+	@echo "Creating static library..."
 	ar rcs $@ $^
+
+# --- Test Targets ---
 
 test: $(LIB_NAME) tests/test_sstring.c
 	$(CC) $(CFLAGS) -o test_sstring tests/test_sstring.c $(LIB_NAME) $(LIBS)
@@ -59,20 +69,36 @@ test_cors: $(LIB_NAME) tests/test_cors.c
 	$(CC) $(CFLAGS) -o test_cors tests/test_cors.c $(LIB_NAME) $(LIBS)
 	./test_cors
 
+# Pattern rule for object files
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# --- Install / Uninstall ---
+
 install: $(LIB_NAME)
+	@echo "Installing library to $(LIBDIR)..."
 	install -d $(LIBDIR)
-	install -d $(INCLUDEDIR)/cwist
-	install -d $(INCLUDEDIR)/cwist/err
 	install -m 644 $(LIB_NAME) $(LIBDIR)
-	install -m 644 include/cwist/*.h $(INCLUDEDIR)/cwist
-	install -m 644 include/cwist/err/*.h $(INCLUDEDIR)/cwist/err
+
+	@echo "Installing headers to $(INCLUDEDIR)/cwist..."
+	install -d $(INCLUDEDIR)/cwist
+
+	# Recursively copy headers to preserve the directory structure
+	# (e.g., include/cwist/net/http/http.h -> /usr/local/include/cwist/net/http/http.h)
+	cp -r include/cwist/* $(INCLUDEDIR)/cwist/
+
+	# Set correct permissions for the copied files and directories
+	find $(INCLUDEDIR)/cwist -type d -exec chmod 755 {} \;
+	find $(INCLUDEDIR)/cwist -type f -exec chmod 644 {} \;
+	@echo "Installation complete."
 
 uninstall:
+	@echo "Uninstalling cwist..."
 	rm -f $(LIBDIR)/$(LIB_NAME)
 	rm -rf $(INCLUDEDIR)/cwist
+	@echo "Uninstallation complete."
 
 clean:
-	rm -f $(OBJS) $(LIB_NAME) test_sstring test_http test_siphash test_mux stress_test test_cors
+	@echo "Cleaning up build artifacts..."
+	rm -f $(OBJS) $(LIB_NAME)
+	rm -f test_sstring test_http test_siphash test_mux stress_test test_cors test_websocket

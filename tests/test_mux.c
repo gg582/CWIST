@@ -1,7 +1,7 @@
-#include <cwist/mux.h>
-#include <cwist/http.h>
-#include <cwist/query.h>
-#include <cwist/sstring.h>
+#include <cwist/net/http/mux.h>
+#include <cwist/net/http/http.h>
+#include <cwist/net/http/query.h>
+#include <cwist/core/sstring/sstring.h>
 #include <stdio.h>
 #include <assert.h>
 #include <string.h>

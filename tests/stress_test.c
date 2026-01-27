@@ -1,5 +1,5 @@
-#include <cwist/app.h>
-#include <cwist/http.h>
+#include <cwist/sys/app/app.h>
+#include <cwist/net/http/http.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

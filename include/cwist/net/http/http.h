@@ -1,10 +1,10 @@
 #ifndef __CWIST_HTTP_H__
 #define __CWIST_HTTP_H__
 
-#include <cwist/sstring.h>
-#include <cwist/err/cwist_err.h>
-#include <cwist/query.h>
-#include <cwist/sql.h>
+#include <cwist/core/sstring/sstring.h>
+#include <cwist/sys/err/cwist_err.h>
+#include <cwist/net/http/query.h>
+#include <cwist/core/db/sql.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 

@@ -1,5 +1,5 @@
-#include <cwist/websocket.h>
-#include <cwist/http.h>
+#include <cwist/net/websocket/websocket.h>
+#include <cwist/net/http/http.h>
 #include "ws_utils.h"
 
 #include <stdio.h>

@@ -1,8 +1,8 @@
 #ifndef __CWIST_MUX_H__
 #define __CWIST_MUX_H__
 
-#include <cwist/http.h>
-#include <cwist/sstring.h>
+#include <cwist/net/http/http.h>
+#include <cwist/core/sstring/sstring.h>
 
 /* --- Mux Router --- */
 

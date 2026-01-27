@@ -1,4 +1,4 @@
-#include <cwist/session_manager.h>
+#include <cwist/sys/session/session_manager.h>
 #include <stdlib.h>
 #include <string.h>
 

@@ -1,5 +1,5 @@
-#include <cwist/sstring.h>
-#include <cwist/err/cwist_err.h>
+#include <cwist/core/sstring/sstring.h>
+#include <cwist/sys/err/cwist_err.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

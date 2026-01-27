@@ -1,5 +1,5 @@
-#include <cwist/sql.h>
-#include <cwist/err/cwist_err.h>
+#include <cwist/core/db/sql.h>
+#include <cwist/sys/err/cwist_err.h>
 #include <sqlite3.h>
 #include <stdio.h>
 #include <stdlib.h>

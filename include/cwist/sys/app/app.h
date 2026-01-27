@@ -1,13 +1,13 @@
 #ifndef __CWIST_APP_H__
 #define __CWIST_APP_H__
 
-#include <cwist/http.h>
-#include <cwist/https.h>
-#include <cwist/sql.h>
-#include <cwist/err/cwist_err.h>
-#include <cwist/macros.h>
+#include <cwist/net/http/http.h>
+#include <cwist/net/http/https.h>
+#include <cwist/core/db/sql.h>
+#include <cwist/sys/err/cwist_err.h>
+#include <cwist/core/macros.h>
 
-#include <cwist/websocket.h>
+#include <cwist/net/websocket/websocket.h>
 
 typedef void (*cwist_handler_func)(cwist_http_request *req, cwist_http_response *res);
 typedef void (*cwist_ws_handler_func)(cwist_websocket *ws);

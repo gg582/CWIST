@@ -1,7 +1,7 @@
-#include <cwist/websocket.h>
-#include <cwist/http.h>
-#include <cwist/sstring.h>
-#include "../src/websocket/ws_utils.h"
+#include <cwist/net/websocket/websocket.h>
+#include <cwist/net/http/http.h>
+#include <cwist/core/sstring/sstring.h>
+#include "../src/net/websocket/ws_utils.h"
 #include <stdio.h>
 #include <assert.h>
 #include <string.h>

@@ -1,12 +1,12 @@
 # HTTP Core API
 
-*Header:* `<cwist/http.h>`
+*Header:* `<cwist/net/http/http.h>`
 
 Low-level HTTP structures, framing limits, and parsing logic.
 
 ## Constants
 
-Defined in `<cwist/http.h>` to guard every connection against resource exhaustion.
+Defined in `<cwist/net/http/http.h>` to guard every connection against resource exhaustion.
 
 - `CWIST_HTTP_MAX_HEADER_SIZE` – cap on accumulated header bytes (default 8KiB).
 - `CWIST_HTTP_MAX_BODY_SIZE` – cap on POST body bytes kept in memory (default 10MiB).

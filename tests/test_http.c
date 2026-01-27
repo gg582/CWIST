@@ -1,4 +1,4 @@
-#include <cwist/http.h>
+#include <cwist/net/http/http.h>
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>

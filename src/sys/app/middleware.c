@@ -1,8 +1,8 @@
 #define _POSIX_C_SOURCE 200809L
-#include <cwist/middleware.h>
-#include <cwist/http.h>
-#include <cwist/macros.h>
-#include <cwist/json_builder.h>
+#include <cwist/sys/app/middleware.h>
+#include <cwist/net/http/http.h>
+#include <cwist/core/macros.h>
+#include <cwist/core/utils/json_builder.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

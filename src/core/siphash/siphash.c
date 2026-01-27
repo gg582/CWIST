@@ -4,7 +4,7 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
-#include <cwist/siphash.h>
+#include <cwist/core/siphash/siphash.h>
 
 /* Left-rotate a 64-bit integer by 'b' bits */
 #define ROTL(x, b) (uint64_t)(((x) << (b)) | ((x) >> (64 - (b))))

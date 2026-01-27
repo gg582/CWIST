@@ -1,7 +1,7 @@
 #ifndef __CWIST_MIDDLEWARE_H__
 #define __CWIST_MIDDLEWARE_H__
 
-#include <cwist/app.h>
+#include <cwist/sys/app/app.h>
 
 // Request ID Middleware
 // If header_name is NULL, defaults to "X-Request-Id"

@@ -1,9 +1,9 @@
 #define _POSIX_C_SOURCE 200809L
-#include <cwist/app.h>
-#include <cwist/http.h>
-#include <cwist/https.h>
-#include <cwist/sstring.h>
-#include <cwist/json_builder.h> // Helper included for apps, though not strictly used here yet
+#include <cwist/sys/app/app.h>
+#include <cwist/net/http/http.h>
+#include <cwist/net/http/https.h>
+#include <cwist/core/sstring/sstring.h>
+#include <cwist/core/utils/json_builder.h> // Helper included for apps, though not strictly used here yet
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>

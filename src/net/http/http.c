@@ -1,7 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
-#include <cwist/http.h>
-#include <cwist/sstring.h>
-#include <cwist/err/cwist_err.h>
+#include <cwist/net/http/http.h>
+#include <cwist/core/sstring/sstring.h>
+#include <cwist/sys/err/cwist_err.h>
 
 #include <limits.h>
 #include <stdio.h>
@@ -343,8 +343,15 @@ cwist_http_request *cwist_http_parse_request(const char *raw_request) {
         line_start = line_end + 2;
     }
 
+    const char *body_start = header_end + 4;
+    if (*body_start != '\0') {
+        cwist_sstring_assign(req->body, (char*)body_start);
+    }
+
     return req;
 }
+
+
 
 cwist_http_request *cwist_http_receive_request(int client_fd, char *read_buf, size_t buf_size, size_t *buf_len) {
     size_t total_received = *buf_len;

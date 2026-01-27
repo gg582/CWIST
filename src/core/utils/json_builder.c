@@ -1,5 +1,5 @@
-#include <cwist/json_builder.h>
-#include <cwist/sstring.h>
+#include <cwist/core/utils/json_builder.h>
+#include <cwist/core/sstring/sstring.h>
 #include <stdlib.h>
 #include <stdio.h>
 
