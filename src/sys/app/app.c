@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE
 #include <cwist/sys/app/app.h>
 #include <cwist/net/http/http.h>
 #include <cwist/net/http/https.h>
@@ -7,8 +8,13 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <time.h>
+#include <pthread.h>
 
 #define CWIST_ROUTE_BUCKETS 127
 
@@ -156,9 +162,34 @@ static cwist_route_entry *cwist_route_table_lookup(cwist_route_table *table, cwi
     if (!table || !path) return NULL;
     size_t idx = cwist_route_hash(method, path, table->bucket_count);
     cwist_route_entry *curr = table->buckets[idx];
+    
+    // Tiny string optimization: if length <= 8, cast to uint64 and compare in one shot
+    // Note: We need to handle potential access beyond string end safely.
+    // However, simplest heuristic is checking length first.
+    // Actually, we can just check length.
+    
+    size_t path_len = strlen(path);
+    uint64_t path_u64 = 0;
+    bool use_fast_path = (path_len <= 8);
+    if (use_fast_path) {
+        memcpy(&path_u64, path, path_len); // Safe copy
+    }
+
     while (curr) {
-        if (curr->method == method && strcmp(curr->path, path) == 0) {
-            return curr;
+        if (curr->method == method) {
+            if (use_fast_path) {
+                 // Fast path check
+                 size_t curr_len = strlen(curr->path);
+                 if (curr_len == path_len) {
+                     uint64_t curr_u64 = 0;
+                     memcpy(&curr_u64, curr->path, curr_len);
+                     if (path_u64 == curr_u64) return curr;
+                 }
+            } else {
+                if (strcmp(curr->path, path) == 0) {
+                    return curr;
+                }
+            }
         }
         curr = curr->next;
     }
@@ -253,6 +284,144 @@ static bool cwist_prepare_static(cwist_app *app, cwist_http_request *req, cwist_
     return false;
 }
 
+static void cwist_scan_recursive(const char *fs_root, size_t *total_size, cwist_fix_server_mem *mem, bool dry_run) {
+    DIR *d = opendir(fs_root);
+    if (!d) return;
+
+    struct dirent *dir;
+    char full_path[PATH_MAX];
+    struct stat st;
+
+    while ((dir = readdir(d)) != NULL) {
+        if (strcmp(dir->d_name, ".") == 0 || strcmp(dir->d_name, "..") == 0) continue;
+
+        snprintf(full_path, sizeof(full_path), "%s/%s", fs_root, dir->d_name);
+        if (stat(full_path, &st) == -1) continue;
+
+        if (S_ISDIR(st.st_mode)) {
+            cwist_scan_recursive(full_path, total_size, mem, dry_run);
+        } else if (S_ISREG(st.st_mode)) {
+            if (dry_run) {
+                if (total_size) *total_size += st.st_size;
+            } else if (mem) {
+                if (mem->current_used + st.st_size <= mem->total_capacity) {
+                    FILE *f = fopen(full_path, "rb");
+                    if (f) {
+                        fread(mem->raw_memory + mem->current_used, 1, st.st_size, f);
+                        fclose(f);
+                        
+                        if (mem->file_count >= mem->files_capacity) {
+                            size_t new_cap = mem->files_capacity == 0 ? 16 : mem->files_capacity * 2;
+                            cwist_file_t *new_files = realloc(mem->files, new_cap * sizeof(cwist_file_t));
+                            if (new_files) {
+                                mem->files = new_files;
+                                mem->files_capacity = new_cap;
+                            }
+                        }
+                        
+                        if (mem->file_count < mem->files_capacity) {
+                            cwist_file_t *entry = &mem->files[mem->file_count++];
+                            entry->path = NULL; 
+                            entry->fs_path = strdup(full_path);
+                            entry->offset = mem->current_used;
+                            entry->size = st.st_size;
+                            entry->last_mod = st.st_mtime;
+                        }
+                        
+                        mem->current_used += st.st_size;
+                    }
+                }
+            }
+        }
+    }
+    closedir(d);
+}
+
+static void cwist_mem_init(cwist_app *app) {
+    if (!app || !app->static_dirs) return;
+    
+    app->mem_manager = calloc(1, sizeof(cwist_fix_server_mem));
+    app->mem_manager->check_interval_ms = 2000; 
+    pthread_mutex_init(&app->mem_manager->lock, NULL);
+
+    size_t total_size = 0;
+    cwist_static_dir *curr = app->static_dirs;
+    while (curr) {
+        cwist_scan_recursive(curr->fs_root, &total_size, NULL, true);
+        curr = curr->next;
+    }
+
+    if (app->max_mem_space > 0) {
+        app->mem_manager->total_capacity = app->max_mem_space;
+    } else {
+        if (total_size == 0) total_size = CWIST_MIB(1); 
+        app->mem_manager->total_capacity = total_size * 2;
+    }
+
+    app->mem_manager->raw_memory = malloc(app->mem_manager->total_capacity);
+    if (!app->mem_manager->raw_memory) {
+        fprintf(stderr, "Failed to allocate server memory: %zu bytes\n", app->mem_manager->total_capacity);
+        return;
+    }
+    app->mem_manager->current_used = 0;
+    
+    // Load files
+    curr = app->static_dirs;
+    while (curr) {
+        cwist_scan_recursive(curr->fs_root, NULL, app->mem_manager, false);
+        curr = curr->next;
+    }
+    
+    printf("Server Memory Initialized: %zu used / %zu total bytes (%zu files)\n", 
+           app->mem_manager->current_used, app->mem_manager->total_capacity, app->mem_manager->file_count);
+}
+
+static void *cwist_mem_watcher(void *arg) {
+    cwist_app *app = (cwist_app *)arg;
+    cwist_fix_server_mem *mem = app->mem_manager;
+    
+    while (mem->watcher_running) {
+        usleep(mem->check_interval_ms * 1000);
+        
+        pthread_mutex_lock(&mem->lock);
+        for (size_t i = 0; i < mem->file_count; i++) {
+            cwist_file_t *f = &mem->files[i];
+            struct stat st;
+            if (stat(f->fs_path, &st) == 0) {
+                if (st.st_mtime > f->last_mod) {
+                     if (mem->current_used + st.st_size <= mem->total_capacity) {
+                        FILE *fp = fopen(f->fs_path, "rb");
+                        if (fp) {
+                            fread(mem->raw_memory + mem->current_used, 1, st.st_size, fp);
+                            fclose(fp);
+                            
+                            f->offset = mem->current_used;
+                            f->size = st.st_size;
+                            f->last_mod = st.st_mtime;
+                            mem->current_used += st.st_size;
+                            printf("[Hot Reload] Updated: %s\n", f->fs_path);
+                        }
+                     } else {
+                         fprintf(stderr, "[Hot Reload] OOM for %s\n", f->fs_path);
+                     }
+                }
+            }
+        }
+        pthread_mutex_unlock(&mem->lock);
+    }
+    return NULL;
+}
+
+static cwist_file_t *cwist_mem_get_file(cwist_fix_server_mem *mem, const char *fs_path) {
+    if (!mem || !fs_path) return NULL;
+    for (size_t i = 0; i < mem->file_count; i++) {
+        if (strcmp(mem->files[i].fs_path, fs_path) == 0) {
+            return &mem->files[i];
+        }
+    }
+    return NULL;
+}
+
 static char *cwist_normalize_prefix(const char *prefix) {
     if (!prefix || prefix[0] == '\0') {
         return strdup("/");
@@ -327,33 +496,54 @@ static void cwist_static_handler(cwist_http_request *req, cwist_http_response *r
         return;
     }
 
-    size_t file_size = 0;
-    cwist_error_t ferr = cwist_http_response_send_file(res, fs_path, NULL, &file_size);
-    if (ferr.error.err_i16 == 0) {
-        if (req->method == CWIST_HTTP_HEAD) {
-            char len_buf[32];
-            snprintf(len_buf, sizeof(len_buf), "%zu", file_size);
-            if (!cwist_http_header_get(res->headers, "Content-Length")) {
-                cwist_http_header_add(&res->headers, "Content-Length", len_buf);
-            }
-            cwist_sstring_assign(res->body, "");
-        }
-        return;
+    cwist_app *app = req->app;
+    if (!app || !app->mem_manager) {
+         res->status_code = CWIST_HTTP_INTERNAL_ERROR;
+         cwist_sstring_assign(res->body, "Server memory not initialized");
+         return;
     }
 
-    if (ferr.error.err_i16 == -ENOENT) {
+    cwist_fix_server_mem *mem = app->mem_manager;
+    pthread_mutex_lock(&mem->lock);
+    cwist_file_t *file = cwist_mem_get_file(mem, fs_path);
+    
+    if (file) {
+        // Simple MIME guess
+        const char *dot = strrchr(fs_path, '.');
+        const char *mime = "application/octet-stream";
+        if (dot) {
+            if (strcasecmp(dot, ".html") == 0) mime = "text/html; charset=utf-8";
+            else if (strcasecmp(dot, ".css") == 0) mime = "text/css; charset=utf-8";
+            else if (strcasecmp(dot, ".js") == 0) mime = "application/javascript";
+            else if (strcasecmp(dot, ".json") == 0) mime = "application/json";
+            else if (strcasecmp(dot, ".png") == 0) mime = "image/png";
+            else if (strcasecmp(dot, ".jpg") == 0 || strcasecmp(dot, ".jpeg") == 0) mime = "image/jpeg";
+            else if (strcasecmp(dot, ".gif") == 0) mime = "image/gif";
+            else if (strcasecmp(dot, ".svg") == 0) mime = "image/svg+xml";
+            else if (strcasecmp(dot, ".txt") == 0) mime = "text/plain; charset=utf-8";
+        }
+
+        if (req->method == CWIST_HTTP_HEAD) {
+            char len_buf[32];
+            snprintf(len_buf, sizeof(len_buf), "%zu", file->size);
+            cwist_http_header_add(&res->headers, "Content-Length", len_buf);
+            cwist_http_header_add(&res->headers, "Content-Type", mime);
+            cwist_sstring_assign(res->body, "");
+        } else {
+            // ZERO COPY
+            cwist_http_response_set_body_ptr(res, mem->raw_memory + file->offset, file->size);
+            
+            char len_buf[32];
+            snprintf(len_buf, sizeof(len_buf), "%zu", file->size);
+            cwist_http_header_add(&res->headers, "Content-Length", len_buf);
+            cwist_http_header_add(&res->headers, "Content-Type", mime);
+        }
+        res->status_code = CWIST_HTTP_OK;
+    } else {
         res->status_code = CWIST_HTTP_NOT_FOUND;
         cwist_sstring_assign(res->body, "Not Found");
-    } else if (ferr.error.err_i16 == -EISDIR) {
-        res->status_code = CWIST_HTTP_FORBIDDEN;
-        cwist_sstring_assign(res->body, "Directory listing not allowed");
-    } else if (ferr.error.err_i16 == -EFBIG) {
-        res->status_code = CWIST_HTTP_INTERNAL_ERROR;
-        cwist_sstring_assign(res->body, "Static file too large");
-    } else {
-        res->status_code = CWIST_HTTP_INTERNAL_ERROR;
-        cwist_sstring_assign(res->body, "Failed to read static file");
     }
+    pthread_mutex_unlock(&mem->lock);
 }
 #include <limits.h>
 #include <errno.h>
@@ -377,6 +567,9 @@ cwist_app *cwist_app_create(void) {
     app->static_dirs = NULL;
     app->db = NULL;
     app->db_path = NULL;
+    app->max_mem_space = 0;
+    app->mem_manager = NULL;
+    app->bdr_ctx = cwist_bdr_create();
     
     return app;
 }
@@ -394,6 +587,10 @@ void cwist_app_use(cwist_app *app, cwist_middleware_func mw) {
         while (curr->next) curr = curr->next;
         curr->next = node;
     }
+}
+
+void cwist_app_set_max_memspace(cwist_app *app, size_t size) {
+    if (app) app->max_mem_space = size;
 }
 
 void cwist_app_set_error_handler(cwist_app *app, cwist_error_handler_func handler) {
@@ -422,6 +619,28 @@ void cwist_app_destroy(cwist_app *app) {
         free(curr_s->fs_root);
         free(curr_s);
         curr_s = next;
+    }
+
+    if (app->mem_manager) {
+        app->mem_manager->watcher_running = false;
+        // If thread was started, join it. 
+        // Note: In simple destroy we might not have started it or might be crashing, but try join.
+        if (app->mem_manager->watcher_thread) {
+             pthread_join(app->mem_manager->watcher_thread, NULL);
+        }
+        pthread_mutex_destroy(&app->mem_manager->lock);
+        
+        for (size_t i = 0; i < app->mem_manager->file_count; i++) {
+            free(app->mem_manager->files[i].path);
+            free(app->mem_manager->files[i].fs_path);
+        }
+        free(app->mem_manager->files);
+        free(app->mem_manager->raw_memory);
+        free(app->mem_manager);
+    }
+    
+    if (app->bdr_ctx) {
+        cwist_bdr_destroy(app->bdr_ctx);
     }
 
     if (app->db) {
@@ -662,14 +881,37 @@ static void static_http_handler(int client_fd, void *ctx) {
         req->app = app;
         req->db = app->db;
 
+        // --- Big Dumb Reply (Read) ---
+        if (app->bdr_ctx && req->method == CWIST_HTTP_GET) {
+            size_t cached_len = 0;
+            const void *cached_blob = cwist_bdr_get(app->bdr_ctx, "GET", req->path->data, &cached_len);
+            if (cached_blob) {
+                // BDR Hit! Blast it out.
+                send(client_fd, cached_blob, cached_len, 0); // Flags handled by socket opt ideally or just 0
+                
+                // Cleanup and Loop
+                bool keep_alive = req->keep_alive;
+                cwist_http_request_destroy(req);
+                if (!keep_alive) break;
+                continue;
+            }
+        }
+        // -----------------------------
+
         cwist_http_response *res = cwist_http_response_create();
         if (!res) {
             cwist_http_request_destroy(req);
             break;
         }
         
+        struct timespec start, end;
+        clock_gettime(CLOCK_MONOTONIC, &start);
+
         internal_route_handler(app, req, res);
         
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        uint64_t duration_ms = (end.tv_sec - start.tv_sec) * 1000 + (end.tv_nsec - start.tv_nsec) / 1000000;
+
         bool keep_alive = req->keep_alive && res->keep_alive;
         
         if (!req->upgraded) {
@@ -678,6 +920,21 @@ static void static_http_handler(int client_fd, void *ctx) {
                 cwist_http_request_destroy(req);
                 break;
             }
+            
+            // --- Big Dumb Reply (Learn) ---
+            if (app->bdr_ctx && req->method == CWIST_HTTP_GET && duration_ms > (uint64_t)app->bdr_ctx->latency_threshold_ms) {
+                // Too slow! Cache it.
+                // We need to serialize the response we just sent.
+                // Note: This duplicates serialization work (once in send_response, once here).
+                // Optimization: send_response could return the blob, or we serialize first then send.
+                // For now, re-serialize for BDR.
+                cwist_sstring *serialized = cwist_http_stringify_response(res);
+                if (serialized) {
+                     cwist_bdr_put(app->bdr_ctx, "GET", req->path->data, serialized->data, serialized->size);
+                     cwist_sstring_destroy(serialized);
+                }
+            }
+            // ------------------------------
         }
         
         cwist_http_response_destroy(res);
@@ -695,6 +952,13 @@ static void static_http_handler(int client_fd, void *ctx) {
 int cwist_app_listen(cwist_app *app, int port) {
     if (!app) return -1;
     app->port = port;
+    
+    // Initialize Memory Manager
+    cwist_mem_init(app);
+    if (app->mem_manager) {
+        app->mem_manager->watcher_running = true;
+        pthread_create(&app->mem_manager->watcher_thread, NULL, cwist_mem_watcher, app);
+    }
     
     struct sockaddr_in addr;
     int server_fd = cwist_make_socket_ipv4(&addr, "0.0.0.0", port, 128);

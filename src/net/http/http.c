@@ -224,6 +224,9 @@ cwist_http_response *cwist_http_response_create(void) {
     res->headers = NULL;
     res->body = cwist_sstring_create();
     res->keep_alive = true;
+    res->is_ptr_body = false;
+    res->ptr_body = NULL;
+    res->ptr_body_len = 0;
 
     // Defaults
     cwist_sstring_assign(res->version, "HTTP/1.1");
@@ -240,6 +243,135 @@ void cwist_http_response_destroy(cwist_http_response *res) {
         cwist_http_header_free_all(res->headers);
         free(res);
     }
+}
+
+void cwist_http_response_set_body_ptr(cwist_http_response *res, const void *ptr, size_t len) {
+    if (!res) return;
+    res->is_ptr_body = true;
+    res->ptr_body = ptr;
+    res->ptr_body_len = len;
+}
+
+// ... (request parsing omitted) ...
+
+int headers_have_content_length(cwist_http_header_node *headers) {
+    cwist_http_header_node *curr = headers;
+    while (curr) {
+        if (curr->key && curr->key->data && strcasecmp(curr->key->data, "Content-Length") == 0) {
+            return 1;
+        }
+        curr = curr->next;
+    }
+    return 0;
+}
+
+// Helper to serialize headers only
+static size_t serialize_headers(cwist_http_response *res, char *buf, size_t buf_size) {
+    size_t body_len = res->is_ptr_body ? res->ptr_body_len : (res->body ? res->body->size : 0);
+    int offset = 0;
+    
+    // Status Line
+    offset += snprintf(buf + offset, buf_size - offset, "%s %d %s\r\n",
+             res->version->data ? res->version->data : "HTTP/1.1",
+             res->status_code,
+             res->status_text->data ? res->status_text->data : "OK");
+
+    // Headers
+    cwist_http_header_node *curr = res->headers;
+    while (curr) {
+        if (curr->key->data && curr->value->data) {
+             offset += snprintf(buf + offset, buf_size - offset, "%s: %s\r\n", curr->key->data, curr->value->data);
+        }
+        curr = curr->next;
+    }
+
+    if (!headers_have_content_length(res->headers)) {
+        offset += snprintf(buf + offset, buf_size - offset, "Content-Length: %zu\r\n", body_len);
+    }
+
+    if (!headers_have_connection(res->headers)) {
+        if (res->keep_alive) {
+            offset += snprintf(buf + offset, buf_size - offset, "Connection: keep-alive\r\n");
+        } else {
+            offset += snprintf(buf + offset, buf_size - offset, "Connection: close\r\n");
+        }
+    }
+
+    offset += snprintf(buf + offset, buf_size - offset, "\r\n");
+    return offset;
+}
+
+#include <sys/uio.h> // For writev
+
+cwist_error_t cwist_http_send_response(int client_fd, cwist_http_response *res) {
+    cwist_error_t err = make_error(CWIST_ERR_INT16);
+
+    if (client_fd < 0 || !res) {
+        err.error.err_i16 = -1;
+        return err;
+    }
+
+    // 1. Prepare Headers (On Stack)
+    char header_buf[CWIST_HTTP_MAX_HEADER_SIZE];
+    size_t header_len = serialize_headers(res, header_buf, sizeof(header_buf));
+
+    // 2. Prepare Body
+    const void *body_ptr = NULL;
+    size_t body_len = 0;
+
+    if (res->is_ptr_body) {
+        body_ptr = res->ptr_body;
+        body_len = res->ptr_body_len;
+    } else if (res->body && res->body->data) {
+        body_ptr = res->body->data;
+        body_len = res->body->size;
+    }
+
+    // 3. sendmsg (Scatter/Gather + Flags) - Zero Copy Send
+    struct msghdr msg = {0};
+    struct iovec iov[2];
+    int iov_cnt = 1;
+
+    iov[0].iov_base = header_buf;
+    iov[0].iov_len = header_len;
+
+    if (body_len > 0 && body_ptr) {
+        iov[1].iov_base = (void*)body_ptr;
+        iov[1].iov_len = body_len;
+        iov_cnt = 2;
+    }
+
+    msg.msg_iov = iov;
+    msg.msg_iovlen = iov_cnt;
+
+    int flags = 0;
+    #if defined(MSG_NOSIGNAL)
+    flags = MSG_NOSIGNAL;
+    #endif
+
+    ssize_t written = sendmsg(client_fd, &msg, flags);
+    if (written < 0) {
+        err.error.err_i16 = -1;
+    } else {
+        err.error.err_i16 = 0;
+    }
+
+    return err;
+}
+
+cwist_sstring *cwist_http_stringify_response(cwist_http_response *res) {
+    // Deprecated / Debug only
+    if (!res) return NULL;
+    cwist_sstring *s = cwist_sstring_create();
+    char header_buf[CWIST_HTTP_MAX_HEADER_SIZE];
+    serialize_headers(res, header_buf, sizeof(header_buf));
+    cwist_sstring_assign(s, header_buf);
+    if (res->is_ptr_body && res->ptr_body) {
+        cwist_sstring_append_len(s, (char*)res->ptr_body, res->ptr_body_len);
+    } else if (res->body) {
+        cwist_sstring_append(s, res->body->data);
+    }
+    return s;
 }
 
 cwist_http_request *cwist_http_parse_request(const char *raw_request) {
@@ -441,132 +573,6 @@ cwist_http_request *cwist_http_receive_request(int client_fd, char *read_buf, si
     return req;
 }
 
-int headers_have_content_length(cwist_http_header_node *headers) {
-    cwist_http_header_node *curr = headers;
-    while (curr) {
-        if (curr->key && curr->key->data && strcasecmp(curr->key->data, "Content-Length") == 0) {
-            return 1;
-        }
-        curr = curr->next;
-    }
-    return 0;
-}
-
-
-cwist_sstring *cwist_http_stringify_response(cwist_http_response *res) {
-    if (!res) return NULL;
-
-    cwist_sstring *response_str = cwist_sstring_create();
-    size_t body_len = 0;
-    if (res->body) {
-        body_len = res->body->size;
-    }
-
-    // Status Line
-    char status_line[256];
-    snprintf(status_line, sizeof(status_line), "%s %d %s\r\n",
-             res->version->data ? res->version->data : "HTTP/1.1",
-             res->status_code,
-             res->status_text->data ? res->status_text->data : "OK");
-    cwist_sstring_append(response_str, status_line);
-
-    // Headers
-    cwist_http_header_node *curr = res->headers;
-    while (curr) {
-        if (curr->key->data && curr->value->data) {
-            cwist_sstring_append(response_str, curr->key->data);
-            cwist_sstring_append(response_str, ": ");
-            cwist_sstring_append(response_str, curr->value->data);
-            cwist_sstring_append(response_str, "\r\n");
-        }
-        curr = curr->next;
-    }
-
-    if (!headers_have_content_length(res->headers)) {
-        char cl_header[64];
-        snprintf(cl_header, sizeof(cl_header), "Content-Length: %zu\r\n", body_len);
-        cwist_sstring_append(response_str, cl_header);
-    }
-
-    if (!headers_have_connection(res->headers)) {
-        if (res->keep_alive) {
-            cwist_sstring_append(response_str, "Connection: keep-alive\r\n");
-        } else {
-            cwist_sstring_append(response_str, "Connection: close\r\n");
-        }
-    }
-
-    // End of headers
-    cwist_sstring_append(response_str, "\r\n");
-
-    // Body
-    if (res->body && res->body->data) {
-        cwist_sstring_append_len(response_str, res->body->data, res->body->size);
-    }
-    
-    return response_str;
-}
-
-cwist_error_t cwist_http_send_response(int client_fd, cwist_http_response *res) {
-    cwist_error_t err = make_error(CWIST_ERR_INT16);
-
-    if (client_fd < 0 || !res) {
-        err.error.err_i16 = -1;
-        return err;
-    }
-
-    cwist_sstring *response_str = cwist_http_stringify_response(res);
-    if (!response_str) {
-        err.error.err_i16 = -1;
-        return err;
-    }
-
-    // Send
-    err.error.err_i16 = 0;
-
-    const char *p = response_str->data;
-    size_t left = response_str->size;
-
-    signal(SIGPIPE, SIG_IGN);
-
-    while (left > 0) {
-        struct pollfd pfd = { .fd = client_fd, .events = POLLOUT };
-        int ret = poll(&pfd, 1, CWIST_HTTP_TIMEOUT_MS);
-        if (ret <= 0) {
-            err.error.err_i16 = -1;
-            break;
-        }
-
-        ssize_t sent;
-        #ifdef MSG_NOSIGNAL
-        sent = send(client_fd, p, left, MSG_NOSIGNAL);
-        #else
-        sent = send(client_fd, p, left, 0);
-        #endif
-
-        if (sent < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                continue;
-            }
-            err.error.err_i16 = -1;
-            break;
-        }
-        if (sent == 0) {
-            err.error.err_i16 = -1;
-            break;
-        }
-
-        p += (size_t)sent;
-        left -= (size_t)sent;
-    }
-
-    cwist_sstring_destroy(response_str);
-    return err;
-}
-
 typedef struct {
     const char *ext;
     const char *mime;
@@ -686,6 +692,12 @@ cwist_error_t cwist_http_response_send_file(cwist_http_response *res, const char
     return err;
 }
 
+/* --- Predefined Static Blobs --- */
+
+const char CWIST_BLOB_200_OK[] = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n";
+const char CWIST_BLOB_404[] = "HTTP/1.1 404 Not Found\r\nContent-Length: 13\r\nConnection: keep-alive\r\n\r\n404 Not Found";
+const char CWIST_BLOB_500[] = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 21\r\nConnection: close\r\n\r\nInternal Server Error";
+
 /* --- Socket Manipulation --- */
 
 int cwist_make_socket_ipv4(struct sockaddr_in *sockv4, const char *address, uint16_t port, uint16_t backlog) {
@@ -719,7 +731,13 @@ int cwist_make_socket_ipv4(struct sockaddr_in *sockv4, const char *address, uint
     return CWIST_HTTP_SETSOCKOPT_FAILED;  
   }
 
+#if defined(__APPLE__) || defined(__FreeBSD__)
+  int no_sig_pipe = 1;
+  setsockopt(server_fd, SOL_SOCKET, SO_NOSIGPIPE, &no_sig_pipe, sizeof(no_sig_pipe));
+#endif
+
   sockv4->sin_family = AF_INET;
+
   sockv4->sin_addr.s_addr = addr;
   sockv4->sin_port = htons(port);
 
