@@ -16,8 +16,174 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <pthread.h>
+#include <ttak/mem/mem.h>
+#include <ttak/timing/timing.h>
 
 #define CWIST_ROUTE_BUCKETS 127
+#define CWIST_STATIC_RETIRE_NS TT_SECOND(5)
+
+static inline uint64_t cwist_mem_now(void) {
+    return ttak_get_tick_count();
+}
+
+static bool cwist_mem_has_capacity(cwist_fix_server_mem *mem, size_t incoming, size_t reclaimable) {
+    if (!mem || mem->total_capacity == 0) {
+        return true;
+    }
+    if (incoming > mem->total_capacity) {
+        return false;
+    }
+    size_t used = mem->current_used;
+    if (reclaimable > used) {
+        reclaimable = used;
+    }
+    size_t projected = used - reclaimable + incoming;
+    return projected <= mem->total_capacity;
+}
+
+static cwist_file_t *cwist_mem_claim_entry(cwist_fix_server_mem *mem) {
+    if (!mem) return NULL;
+    if (mem->file_count >= mem->files_capacity) {
+        size_t new_cap = mem->files_capacity == 0 ? 16 : mem->files_capacity * 2;
+        cwist_file_t *new_files = realloc(mem->files, new_cap * sizeof(cwist_file_t));
+        if (!new_files) {
+            return NULL;
+        }
+        mem->files = new_files;
+        mem->files_capacity = new_cap;
+    }
+    cwist_file_t *entry = &mem->files[mem->file_count];
+    memset(entry, 0, sizeof(*entry));
+    mem->file_count++;
+    return entry;
+}
+
+static bool cwist_mem_create_payload(cwist_fix_server_mem *mem, const char *fs_path, size_t size, void **data_out, ttak_mem_node_t **node_out) {
+    if (!mem || !fs_path || !data_out || !node_out) return false;
+
+    void *buffer = ttak_mem_alloc_safe(size ? size : 1, __TTAK_UNSAFE_MEM_FOREVER__, cwist_mem_now(), true, false, true, true, TTAK_MEM_DEFAULT);
+    if (!buffer) {
+        fprintf(stderr, "[StaticMem] Failed to allocate %zu bytes via libttak for %s\n", size, fs_path);
+        return false;
+    }
+
+    FILE *f = fopen(fs_path, "rb");
+    if (!f) {
+        fprintf(stderr, "[StaticMem] Failed to open %s\n", fs_path);
+        ttak_mem_free(buffer);
+        return false;
+    }
+
+    size_t to_read = size;
+    if (to_read > 0) {
+        size_t read = fread(buffer, 1, to_read, f);
+        if (read != to_read) {
+            fprintf(stderr, "[StaticMem] Short read for %s (expected %zu, got %zu)\n", fs_path, to_read, read);
+            fclose(f);
+            ttak_mem_free(buffer);
+            return false;
+        }
+    }
+    fclose(f);
+
+    ttak_mem_node_t *node = ttak_mem_tree_add(&mem->file_tree, buffer, size ? size : 1, __TTAK_UNSAFE_MEM_FOREVER__, true);
+    if (!node) {
+        ttak_mem_free(buffer);
+        return false;
+    }
+
+    *data_out = buffer;
+    *node_out = node;
+    return true;
+}
+
+static void cwist_mem_release_node_delayed(cwist_fix_server_mem *mem, ttak_mem_node_t *node) {
+    if (!mem || !node) return;
+    uint64_t now = cwist_mem_now();
+    pthread_mutex_lock(&node->lock);
+    node->expires_tick = now + mem->retire_grace_ns;
+    pthread_mutex_unlock(&node->lock);
+    ttak_mem_node_release(node);
+}
+
+static bool cwist_mem_attach_entry(cwist_fix_server_mem *mem, cwist_file_t *entry, const char *fs_path, const struct stat *st, void *data, ttak_mem_node_t *node) {
+    if (!mem || !entry || !fs_path || !st) return false;
+    char *path_copy = strdup(fs_path);
+    if (!path_copy) {
+        ttak_mem_tree_remove(&mem->file_tree, node);
+        return false;
+    }
+
+    entry->path = NULL;
+    entry->fs_path = path_copy;
+    entry->data = data;
+    entry->size = st->st_size;
+    entry->last_mod = st->st_mtime;
+    entry->node = node;
+
+    mem->current_used += st->st_size;
+    return true;
+}
+
+static bool cwist_mem_register_file(cwist_fix_server_mem *mem, const char *fs_path, const struct stat *st) {
+    if (!mem || !fs_path || !st) return false;
+    if (!cwist_mem_has_capacity(mem, st->st_size, 0)) {
+        fprintf(stderr, "[StaticMem] Skipping %s (size %zu exceeds capacity)\n", fs_path, st->st_size);
+        return false;
+    }
+    cwist_file_t *entry = cwist_mem_claim_entry(mem);
+    if (!entry) {
+        fprintf(stderr, "[StaticMem] Failed to allocate metadata entry for %s\n", fs_path);
+        return false;
+    }
+    void *data = NULL;
+    ttak_mem_node_t *node = NULL;
+    if (!cwist_mem_create_payload(mem, fs_path, st->st_size, &data, &node)) {
+        mem->file_count--;
+        return false;
+    }
+    if (!cwist_mem_attach_entry(mem, entry, fs_path, st, data, node)) {
+        mem->file_count--;
+        return false;
+    }
+    return true;
+}
+
+static bool cwist_mem_refresh_file(cwist_fix_server_mem *mem, cwist_file_t *entry, const struct stat *st) {
+    if (!mem || !entry || !st) return false;
+    size_t reclaimable = entry->size;
+    if (!cwist_mem_has_capacity(mem, st->st_size, reclaimable)) {
+        fprintf(stderr, "[StaticMem] OOM reloading %s (%zu bytes)\n", entry->fs_path, (size_t)st->st_size);
+        return false;
+    }
+
+    void *data = NULL;
+    ttak_mem_node_t *node = NULL;
+    if (!cwist_mem_create_payload(mem, entry->fs_path, st->st_size, &data, &node)) {
+        return false;
+    }
+
+    ttak_mem_node_t *old_node = entry->node;
+    size_t old_size = entry->size;
+
+    entry->data = data;
+    entry->node = node;
+    entry->size = st->st_size;
+    entry->last_mod = st->st_mtime;
+
+    if (mem->current_used >= old_size) {
+        mem->current_used -= old_size;
+    } else {
+        mem->current_used = 0;
+    }
+    mem->current_used += st->st_size;
+
+    if (old_node) {
+        cwist_mem_release_node_delayed(mem, old_node);
+    }
+    return true;
+}
+
 
 typedef struct cwist_route_entry {
     char *path;
@@ -305,32 +471,8 @@ static void cwist_scan_recursive(const char *fs_root, size_t *total_size, cwist_
             if (dry_run) {
                 if (total_size) *total_size += st.st_size;
             } else if (mem) {
-                if (mem->current_used + st.st_size <= mem->total_capacity) {
-                    FILE *f = fopen(full_path, "rb");
-                    if (f) {
-                        fread(mem->raw_memory + mem->current_used, 1, st.st_size, f);
-                        fclose(f);
-                        
-                        if (mem->file_count >= mem->files_capacity) {
-                            size_t new_cap = mem->files_capacity == 0 ? 16 : mem->files_capacity * 2;
-                            cwist_file_t *new_files = realloc(mem->files, new_cap * sizeof(cwist_file_t));
-                            if (new_files) {
-                                mem->files = new_files;
-                                mem->files_capacity = new_cap;
-                            }
-                        }
-                        
-                        if (mem->file_count < mem->files_capacity) {
-                            cwist_file_t *entry = &mem->files[mem->file_count++];
-                            entry->path = NULL; 
-                            entry->fs_path = strdup(full_path);
-                            entry->offset = mem->current_used;
-                            entry->size = st.st_size;
-                            entry->last_mod = st.st_mtime;
-                        }
-                        
-                        mem->current_used += st.st_size;
-                    }
+                if (!cwist_mem_register_file(mem, full_path, &st)) {
+                    fprintf(stderr, "[StaticMem] Failed to load %s\n", full_path);
                 }
             }
         }
@@ -344,6 +486,8 @@ static void cwist_mem_init(cwist_app *app) {
     app->mem_manager = calloc(1, sizeof(cwist_fix_server_mem));
     app->mem_manager->check_interval_ms = 2000; 
     pthread_mutex_init(&app->mem_manager->lock, NULL);
+    app->mem_manager->retire_grace_ns = CWIST_STATIC_RETIRE_NS;
+    ttak_mem_tree_init(&app->mem_manager->file_tree);
 
     size_t total_size = 0;
     cwist_static_dir *curr = app->static_dirs;
@@ -359,11 +503,6 @@ static void cwist_mem_init(cwist_app *app) {
         app->mem_manager->total_capacity = total_size * 2;
     }
 
-    app->mem_manager->raw_memory = malloc(app->mem_manager->total_capacity);
-    if (!app->mem_manager->raw_memory) {
-        fprintf(stderr, "Failed to allocate server memory: %zu bytes\n", app->mem_manager->total_capacity);
-        return;
-    }
     app->mem_manager->current_used = 0;
     
     // Load files
@@ -390,21 +529,9 @@ static void *cwist_mem_watcher(void *arg) {
             struct stat st;
             if (stat(f->fs_path, &st) == 0) {
                 if (st.st_mtime > f->last_mod) {
-                     if (mem->current_used + st.st_size <= mem->total_capacity) {
-                        FILE *fp = fopen(f->fs_path, "rb");
-                        if (fp) {
-                            fread(mem->raw_memory + mem->current_used, 1, st.st_size, fp);
-                            fclose(fp);
-                            
-                            f->offset = mem->current_used;
-                            f->size = st.st_size;
-                            f->last_mod = st.st_mtime;
-                            mem->current_used += st.st_size;
-                            printf("[Hot Reload] Updated: %s\n", f->fs_path);
-                        }
-                     } else {
-                         fprintf(stderr, "[Hot Reload] OOM for %s\n", f->fs_path);
-                     }
+                    if (cwist_mem_refresh_file(mem, f, &st)) {
+                        printf("[Hot Reload] Updated: %s\n", f->fs_path);
+                    }
                 }
             }
         }
@@ -464,6 +591,15 @@ static char *cwist_normalize_directory(const char *directory) {
     memcpy(copy, directory, len);
     copy[len] = '\0';
     return copy;
+}
+
+static void cwist_static_release_body(const void *ptr, size_t len, void *ctx) {
+    (void)ptr;
+    (void)len;
+    ttak_mem_node_t *node = (ttak_mem_node_t *)ctx;
+    if (node) {
+        ttak_mem_node_release(node);
+    }
 }
 
 static void cwist_static_handler(cwist_http_request *req, cwist_http_response *res) {
@@ -530,14 +666,18 @@ static void cwist_static_handler(cwist_http_request *req, cwist_http_response *r
             cwist_http_header_add(&res->headers, "Content-Length", len_buf);
             cwist_http_header_add(&res->headers, "Content-Type", mime);
             cwist_sstring_assign(res->body, "");
-        } else {
+        } else if (file->data && file->node) {
             // ZERO COPY
-            cwist_http_response_set_body_ptr(res, mem->raw_memory + file->offset, file->size);
+            ttak_mem_node_acquire(file->node);
+            cwist_http_response_set_body_ptr_managed(res, file->data, file->size, cwist_static_release_body, file->node);
             
             char len_buf[32];
             snprintf(len_buf, sizeof(len_buf), "%zu", file->size);
             cwist_http_header_add(&res->headers, "Content-Length", len_buf);
             cwist_http_header_add(&res->headers, "Content-Type", mime);
+        } else {
+            res->status_code = CWIST_HTTP_INTERNAL_ERROR;
+            cwist_sstring_assign(res->body, "Static buffer missing");
         }
         res->status_code = CWIST_HTTP_OK;
     } else {
@@ -636,8 +776,14 @@ void cwist_app_destroy(cwist_app *app) {
             free(app->mem_manager->files[i].path);
             free(app->mem_manager->files[i].fs_path);
         }
+        for (size_t i = 0; i < app->mem_manager->file_count; i++) {
+            if (app->mem_manager->files[i].node) {
+                ttak_mem_tree_remove(&app->mem_manager->file_tree, app->mem_manager->files[i].node);
+                app->mem_manager->files[i].node = NULL;
+            }
+        }
         free(app->mem_manager->files);
-        free(app->mem_manager->raw_memory);
+        ttak_mem_tree_destroy(&app->mem_manager->file_tree);
         free(app->mem_manager);
     }
     
