@@ -1,4 +1,5 @@
 #include <cwist/core/sstring/sstring.h>
+#include <cwist/core/mem/alloc.h>
 #include <cwist/sys/err/cwist_err.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,7 +19,7 @@ cwist_error_t cwist_sstring_assign_len(cwist_sstring *str, const char *data, siz
       return err;
     }
     
-    char *new_data = (char *)realloc(str->data, len + 1);
+    char *new_data = (char *)cwist_realloc(str->data, len + 1);
     if (!new_data && len > 0) {
       cwist_error_t err = make_error(CWIST_ERR_JSON);
       err.error.err_json = cJSON_CreateObject();
@@ -50,7 +51,7 @@ cwist_error_t cwist_sstring_append_len(cwist_sstring *str, const char *data, siz
     size_t current_len = str->size;
     size_t new_size = current_len + len;
 
-    char *new_data = (char *)realloc(str->data, new_size + 1);
+    char *new_data = (char *)cwist_realloc(str->data, new_size + 1);
     if (!new_data) {
          cwist_error_t err = make_error(CWIST_ERR_JSON);
          err.error.err_json = cJSON_CreateObject();
@@ -190,7 +191,7 @@ cwist_error_t cwist_sstring_change_size(cwist_sstring *str, size_t new_size, boo
         return err;
     }
 
-    char *new_data = (char *)realloc(str->data, new_size + 1); 
+    char *new_data = (char *)cwist_realloc(str->data, new_size + 1); 
     if (!new_data && new_size > 0) {
         err.error.err_i8 = ERR_SSTRING_RESIZE_TOO_LARGE;
         return err;                                                
@@ -238,7 +239,7 @@ cwist_error_t cwist_sstring_assign(cwist_sstring *str, char *data) {
         }
         if (str->data) strcpy(str->data, data ? data : "");
     } else {
-        char *new_data = (char *)realloc(str->data, data_len + 1);
+        char *new_data = (char *)cwist_realloc(str->data, data_len + 1);
         if (!new_data) {
           cJSON_AddStringToObject(err.error.err_json, "err", "cannot assign string: memory is full");
           return err;
@@ -282,7 +283,7 @@ cwist_error_t cwist_sstring_append(cwist_sstring *str, const char *data) {
             return err;
         }
     } else {
-        char *new_data = (char *)realloc(str->data, new_size + 1);
+        char *new_data = (char *)cwist_realloc(str->data, new_size + 1);
         if (!new_data) {
              cJSON_AddStringToObject(err.error.err_json, "err", "Cannot append: memory full");
              return err;
@@ -330,7 +331,7 @@ cwist_error_t cwist_sstring_append_escaped(cwist_sstring *str, const char *data)
             return err;
         }
     } else {
-        char *new_data = (char *)realloc(str->data, new_size + 1);
+        char *new_data = (char *)cwist_realloc(str->data, new_size + 1);
         if (!new_data) {
              cJSON_AddStringToObject(err.error.err_json, "err", "Cannot append: memory full");
              return err;
@@ -451,7 +452,7 @@ cwist_error_t cwist_sstring_copy_sstring(cwist_sstring *origin, const cwist_sstr
 }
 
 cwist_sstring *cwist_sstring_create(void) {
-    cwist_sstring *str = (cwist_sstring *)malloc(sizeof(cwist_sstring));
+    cwist_sstring *str = (cwist_sstring *)cwist_alloc(sizeof(cwist_sstring));
     if (!str) return NULL;
 
     memset(str, 0, sizeof(cwist_sstring));
@@ -468,8 +469,8 @@ cwist_sstring *cwist_sstring_create(void) {
 
 void cwist_sstring_destroy(cwist_sstring *str) {
     if (str) {
-        if (str->data) free(str->data);
-        free(str);
+        if (str->data) cwist_free(str->data);
+        cwist_free(str);
     }
 }
 
@@ -497,7 +498,7 @@ cwist_sstring *cwist_sstring_substr(cwist_sstring *str, int start, int length) {
     cwist_sstring *sub = cwist_sstring_create();
     if (!sub) return NULL;
     
-    sub->data = (char *)malloc(length + 1);
+    sub->data = (char *)cwist_alloc(length + 1);
     if (!sub->data) {
         cwist_sstring_destroy(sub);
         return NULL;

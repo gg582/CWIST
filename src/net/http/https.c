@@ -3,6 +3,7 @@
 #include <cwist/net/http/https.h>
 #include <cwist/core/sstring/sstring.h>
 #include <cwist/sys/err/cwist_err.h>
+#include <cwist/core/mem/alloc.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <stdio.h>
@@ -67,7 +68,7 @@ cwist_error_t cwist_https_init_context(cwist_https_context **ctx, const char *ce
         return make_ssl_error("Private key does not match certificate");
     }
 
-    *ctx = (cwist_https_context*)malloc(sizeof(cwist_https_context));
+    *ctx = (cwist_https_context*)cwist_alloc(sizeof(cwist_https_context));
     if (!*ctx) {
         SSL_CTX_free(ssl_ctx);
         err.error.err_i16 = -1;
@@ -84,7 +85,7 @@ void cwist_https_destroy_context(cwist_https_context *ctx) {
         if (ctx->ctx) {
             SSL_CTX_free(ctx->ctx);
         }
-        free(ctx);
+        cwist_free(ctx);
         EVP_cleanup();
     }
 }
@@ -114,7 +115,7 @@ cwist_error_t cwist_https_accept(cwist_https_context *ctx, int client_fd, cwist_
         return ssl_err;
     }
 
-    *conn = (cwist_https_connection*)malloc(sizeof(cwist_https_connection));
+    *conn = (cwist_https_connection*)cwist_alloc(sizeof(cwist_https_connection));
     if (!*conn) {
         SSL_free(ssl);
         err.error.err_i16 = -1;
@@ -123,10 +124,10 @@ cwist_error_t cwist_https_accept(cwist_https_context *ctx, int client_fd, cwist_
 
     (*conn)->fd = client_fd;
     (*conn)->ssl = ssl;
-    (*conn)->read_buf = malloc(CWIST_HTTP_READ_BUFFER_SIZE);
+    (*conn)->read_buf = cwist_alloc(CWIST_HTTP_READ_BUFFER_SIZE);
     if (!(*conn)->read_buf) {
         SSL_free(ssl);
-        free(*conn);
+        cwist_free(*conn);
         *conn = NULL;
         err.error.err_i16 = -1;
         return err;
@@ -147,8 +148,8 @@ void cwist_https_close_connection(cwist_https_connection *conn) {
         if (conn->fd >= 0) {
             close(conn->fd);
         }
-        free(conn->read_buf);
-        free(conn);
+        cwist_free(conn->read_buf);
+        cwist_free(conn);
     }
 }
 
@@ -198,7 +199,7 @@ cwist_http_request *cwist_https_receive_request(cwist_https_connection *conn) {
             return NULL;
         }
 
-        char *body = malloc(req->content_length + 1);
+        char *body = cwist_alloc(req->content_length + 1);
         if (!body) {
             cwist_http_request_destroy(req);
             return NULL;
@@ -212,7 +213,7 @@ cwist_http_request *cwist_https_receive_request(cwist_https_connection *conn) {
             struct pollfd pfd = { .fd = conn->fd, .events = POLLIN };
             int pret = poll(&pfd, 1, CWIST_HTTP_TIMEOUT_MS);
             if (pret <= 0) {
-                free(body);
+                cwist_free(body);
                 cwist_http_request_destroy(req);
                 return NULL;
             }
@@ -223,7 +224,7 @@ cwist_http_request *cwist_https_receive_request(cwist_https_connection *conn) {
                 if (ssl_err == SSL_ERROR_WANT_READ || ssl_err == SSL_ERROR_WANT_WRITE) {
                     continue;
                 }
-                free(body);
+                cwist_free(body);
                 cwist_http_request_destroy(req);
                 return NULL;
             }
@@ -231,7 +232,7 @@ cwist_http_request *cwist_https_receive_request(cwist_https_connection *conn) {
         }
         body[req->content_length] = '\0';
         cwist_sstring_assign_len(req->body, body, req->content_length);
-        free(body);
+        cwist_free(body);
 
         if (body_received > req->content_length) {
             size_t leftover_len = body_received - req->content_length;
@@ -316,7 +317,7 @@ static void *https_thread_handler(void *arg) {
         close(payload->client_fd);
     }
     
-    free(payload);
+    cwist_free(payload);
     return NULL;
 }
 
@@ -338,7 +339,7 @@ cwist_error_t cwist_https_server_loop(int server_fd, cwist_https_context *ctx, v
         }
 
         pthread_t thread;
-        struct https_thread_payload *payload = malloc(sizeof(*payload));
+        struct https_thread_payload *payload = cwist_alloc(sizeof(*payload));
         if (!payload) {
             close(client_fd);
             continue;
@@ -351,7 +352,7 @@ cwist_error_t cwist_https_server_loop(int server_fd, cwist_https_context *ctx, v
         if (pthread_create(&thread, NULL, https_thread_handler, payload) == 0) {
             pthread_detach(thread);
         } else {
-            free(payload);
+            cwist_free(payload);
             close(client_fd);
         }
     }

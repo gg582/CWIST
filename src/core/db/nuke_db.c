@@ -2,6 +2,7 @@
 #define _DEFAULT_SOURCE
 #include <cwist/core/db/nuke_db.h>
 #include <cwist/core/macros.h>
+#include <cwist/core/mem/alloc.h>
 #include <cwist/sys/sys_info.h>
 #include <sqlite3.h>
 #include <stdio.h>
@@ -173,7 +174,7 @@ static void nuke_cleanup_internal(void) {
     }
 
     if (g_nuke.disk_path) {
-        free(g_nuke.disk_path);
+        cwist_free(g_nuke.disk_path);
         g_nuke.disk_path = NULL;
     }
 
@@ -264,7 +265,7 @@ static void *sync_thread_func(void *arg) {
 int cwist_nuke_init(const char *disk_path, int sync_interval_ms) {
     if (g_running) return -1; // Already running
 
-    g_nuke.disk_path = strdup(disk_path);
+    g_nuke.disk_path = cwist_strdup(disk_path);
     g_nuke.sync_interval_ms = sync_interval_ms > 0 ? sync_interval_ms : 1000; // Default 1s if 0
     g_nuke.auto_sync = (sync_interval_ms > 0);
     g_nuke.is_disk_mode = false;

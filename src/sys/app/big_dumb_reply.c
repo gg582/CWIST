@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include <cwist/sys/app/big_dumb_reply.h>
+#include <cwist/core/mem/alloc.h>
 #include <cwist/core/siphash/siphash.h>
 #include <cwist/sys/sys_info.h>
 #include <cwist/core/macros.h>
@@ -15,10 +16,10 @@ static const uint8_t BDR_KEY[16] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x
                                     0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f};
 
 cwist_bdr_t *cwist_bdr_create(void) {
-    cwist_bdr_t *bdr = calloc(1, sizeof(cwist_bdr_t));
+    cwist_bdr_t *bdr = cwist_alloc(sizeof(cwist_bdr_t));
     if (!bdr) return NULL;
     bdr->bucket_count = BDR_BUCKETS;
-    bdr->buckets = calloc(BDR_BUCKETS, sizeof(bdr_entry_t *));
+    bdr->buckets = cwist_alloc_array(BDR_BUCKETS, sizeof(bdr_entry_t *));
     bdr->latency_threshold_ms = 10; 
     bdr->disk_db = NULL;
     bdr->is_disk_mode = false;
@@ -31,17 +32,17 @@ void cwist_bdr_destroy(cwist_bdr_t *bdr) {
         bdr_entry_t *curr = bdr->buckets[i];
         while (curr) {
             bdr_entry_t *next = curr->next;
-            free(curr->response_blob);
-            free(curr);
+            cwist_free(curr->response_blob);
+            cwist_free(curr);
             curr = next;
         }
     }
-    free(bdr->buckets);
+    cwist_free(bdr->buckets);
     if (bdr->disk_db) {
         sqlite3_close(bdr->disk_db);
         remove("cwist_bdr_fallback.db"); // Cleanup temp db
     }
-    free(bdr);
+    cwist_free(bdr);
 }
 
 static uint64_t bdr_hash(const char *method, const char *path) {
@@ -78,8 +79,8 @@ static void bdr_check_ram(cwist_bdr_t *bdr) {
                     
                     // Free memory
                     bdr_entry_t *next = curr->next;
-                    free(curr->response_blob);
-                    free(curr);
+                    cwist_free(curr->response_blob);
+                    cwist_free(curr);
                     curr = next;
                 }
                 bdr->buckets[i] = NULL;
@@ -242,7 +243,7 @@ void cwist_bdr_put(cwist_bdr_t *bdr, const char *method, const char *path, const
 
                     curr->is_stable = false;
 
-                    free(curr->response_blob);
+                    cwist_free(curr->response_blob);
 
                     curr->response_blob = NULL;
 
@@ -258,7 +259,7 @@ void cwist_bdr_put(cwist_bdr_t *bdr, const char *method, const char *path, const
 
                     // Match! Stabilize.
 
-                    curr->response_blob = malloc(len);
+                    curr->response_blob = cwist_alloc(len);
 
                     if (curr->response_blob) {
 
@@ -294,7 +295,7 @@ void cwist_bdr_put(cwist_bdr_t *bdr, const char *method, const char *path, const
 
     // New Entry (Candidate)
 
-    bdr_entry_t *entry = malloc(sizeof(bdr_entry_t));
+    bdr_entry_t *entry = cwist_alloc(sizeof(bdr_entry_t));
 
     if (!entry) return;
 

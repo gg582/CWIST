@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include <cwist/sys/io/cwist_io.h>
+#include <cwist/core/mem/alloc.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -17,7 +18,7 @@ struct cwist_io_queue {
 };
 
 cwist_io_queue *cwist_io_queue_create(size_t capacity) {
-    cwist_io_queue *q = malloc(sizeof(cwist_io_queue));
+    cwist_io_queue *q = cwist_alloc(sizeof(cwist_io_queue));
     q->capacity = capacity;
     pthread_mutex_init(&q->lock, NULL);
     pthread_cond_init(&q->cond, NULL);
@@ -42,5 +43,5 @@ void cwist_io_queue_run(cwist_io_queue *q) {
 void cwist_io_queue_destroy(cwist_io_queue *q) {
     if(!q) return;
     q->running = false;
-    free(q);
+    cwist_free(q);
 }

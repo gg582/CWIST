@@ -1,5 +1,6 @@
 #include <cwist/core/db/sql.h>
 #include <cwist/sys/err/cwist_err.h>
+#include <cwist/core/mem/alloc.h>
 #include <sqlite3.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,7 +27,7 @@ cwist_error_t cwist_db_open(cwist_db **db, const char *path) {
     }
 
     // if malloc fails, return -1
-    *db = (cwist_db*)malloc(sizeof(cwist_db));
+    *db = (cwist_db*)cwist_alloc(sizeof(cwist_db));
     if (!*db) {
         err.error.err_i16 = -1;
         return err;
@@ -36,7 +37,7 @@ cwist_error_t cwist_db_open(cwist_db **db, const char *path) {
     if (rc) {
         cwist_error_t sql_err = make_sqlite_error(rc, (char*)sqlite3_errmsg((*db)->conn));
         sqlite3_close((*db)->conn);
-        free(*db);
+        cwist_free(*db);
         *db = NULL;
         return sql_err;
     }
@@ -50,7 +51,7 @@ void cwist_db_close(cwist_db *db) {
         if (db->conn) {
             sqlite3_close(db->conn);
         }
-        free(db);
+        cwist_free(db);
     }
 }
 

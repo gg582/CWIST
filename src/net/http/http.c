@@ -2,6 +2,7 @@
 #include <cwist/net/http/http.h>
 #include <cwist/core/sstring/sstring.h>
 #include <cwist/sys/err/cwist_err.h>
+#include <cwist/core/mem/alloc.h>
 
 #include <limits.h>
 #include <stdio.h>
@@ -66,7 +67,7 @@ cwist_http_method_t cwist_http_string_to_method(const char *method_str) {
 cwist_error_t cwist_http_header_add(cwist_http_header_node **head, const char *key, const char *value) {
     cwist_error_t err = make_error(CWIST_ERR_INT16);
     
-    cwist_http_header_node *node = (cwist_http_header_node *)malloc(sizeof(cwist_http_header_node));
+    cwist_http_header_node *node = (cwist_http_header_node *)cwist_alloc(sizeof(cwist_http_header_node));
     if (!node) {
         err = make_error(CWIST_ERR_JSON);
         err.error.err_json = cJSON_CreateObject();
@@ -106,7 +107,7 @@ void cwist_http_header_free_all(cwist_http_header_node *head) {
         cwist_http_header_node *next = curr->next;
         cwist_sstring_destroy(curr->key);
         cwist_sstring_destroy(curr->value);
-        free(curr);
+        cwist_free(curr);
         curr = next;
     }
 }
@@ -140,7 +141,7 @@ static bool headers_have_connection(cwist_http_header_node *head) {
 /* --- Request Lifecycle --- */
 
 cwist_http_request *cwist_http_request_create(void) {
-    cwist_http_request *req = (cwist_http_request *)malloc(sizeof(cwist_http_request));
+    cwist_http_request *req = (cwist_http_request *)cwist_alloc(sizeof(cwist_http_request));
     if (!req) return NULL;
 
     req->method = CWIST_HTTP_GET; // Default
@@ -208,7 +209,7 @@ void cwist_http_request_destroy(cwist_http_request *req) {
         cwist_sstring_destroy(req->version);
         cwist_sstring_destroy(req->body);
         cwist_http_header_free_all(req->headers);
-        free(req);
+        cwist_free(req);
     }
 }
 
@@ -227,7 +228,7 @@ static void cwist_http_response_release_ptr_body(cwist_http_response *res) {
 }
 
 cwist_http_response *cwist_http_response_create(void) {
-    cwist_http_response *res = (cwist_http_response *)malloc(sizeof(cwist_http_response));
+    cwist_http_response *res = (cwist_http_response *)cwist_alloc(sizeof(cwist_http_response));
     if (!res) return NULL;
 
     res->version = cwist_sstring_create();
@@ -256,7 +257,7 @@ void cwist_http_response_destroy(cwist_http_response *res) {
         cwist_sstring_destroy(res->status_text);
         cwist_sstring_destroy(res->body);
         cwist_http_header_free_all(res->headers);
-        free(res);
+        cwist_free(res);
     }
 }
 
@@ -418,7 +419,7 @@ cwist_http_request *cwist_http_parse_request(const char *raw_request) {
 
     // 1. Request Line
     int request_line_len = line_end - line_start;
-    char *request_line = (char*)malloc(request_line_len + 1);
+    char *request_line = (char*)cwist_alloc(request_line_len + 1);
     if (!request_line) {
         cwist_http_request_destroy(req);
         return NULL;
@@ -454,7 +455,7 @@ cwist_http_request *cwist_http_parse_request(const char *raw_request) {
         }
     }
     
-    free(request_line);
+    cwist_free(request_line);
 
     // 2. Headers
     line_start = line_end + 2; // Skip \r\n
@@ -469,7 +470,7 @@ cwist_http_request *cwist_http_parse_request(const char *raw_request) {
         }
         
         int header_len = line_end - line_start;
-        char *header_line = (char*)malloc(header_len + 1);
+        char *header_line = (char*)cwist_alloc(header_len + 1);
         if (header_line) {
             strncpy(header_line, line_start, header_len);
             header_line[header_len] = '\0';
@@ -492,7 +493,7 @@ cwist_http_request *cwist_http_parse_request(const char *raw_request) {
                     req->content_length = (size_t)atoll(value);
                 }
             }
-            free(header_line);
+            cwist_free(header_line);
         }
         
         line_start = line_end + 2;
@@ -543,7 +544,7 @@ cwist_http_request *cwist_http_receive_request(int client_fd, char *read_buf, si
         }
 
         // Allocate body
-        char *body = malloc(req->content_length + 1);
+        char *body = cwist_alloc(req->content_length + 1);
         if (!body) {
             cwist_http_request_destroy(req);
             return NULL;
@@ -557,14 +558,14 @@ cwist_http_request *cwist_http_receive_request(int client_fd, char *read_buf, si
             struct pollfd pfd = { .fd = client_fd, .events = POLLIN };
             int ret = poll(&pfd, 1, CWIST_HTTP_TIMEOUT_MS);
             if (ret <= 0) {
-                free(body);
+                cwist_free(body);
                 cwist_http_request_destroy(req);
                 return NULL;
             }
 
             ssize_t bytes = recv(client_fd, body + current_body_len, req->content_length - current_body_len, 0);
             if (bytes <= 0) {
-                free(body);
+                cwist_free(body);
                 cwist_http_request_destroy(req);
                 return NULL;
             }
@@ -572,7 +573,7 @@ cwist_http_request *cwist_http_receive_request(int client_fd, char *read_buf, si
         }
         body[req->content_length] = '\0';
         cwist_sstring_assign_len(req->body, body, req->content_length);
-        free(body);
+        cwist_free(body);
 
         // Calculate leftovers
         if (body_received > req->content_length) {
@@ -666,7 +667,7 @@ cwist_error_t cwist_http_response_send_file(cwist_http_response *res, const char
     char *buffer = NULL;
 
     if (file_size > 0) {
-        buffer = (char *)malloc(file_size);
+        buffer = (char *)cwist_alloc(file_size);
         if (!buffer) {
             close(fd);
             err.error.err_i16 = -ENOMEM;
@@ -680,13 +681,13 @@ cwist_error_t cwist_http_response_send_file(cwist_http_response *res, const char
         if (bytes < 0) {
             if (errno == EINTR) continue;
             err.error.err_i16 = -errno;
-            free(buffer);
+            cwist_free(buffer);
             close(fd);
             return err;
         }
         if (bytes == 0) {
             err.error.err_i16 = -EIO;
-            free(buffer);
+            cwist_free(buffer);
             close(fd);
             return err;
         }
@@ -696,7 +697,7 @@ cwist_error_t cwist_http_response_send_file(cwist_http_response *res, const char
 
     if (file_size > 0) {
         cwist_sstring_assign_len(res->body, buffer, file_size);
-        free(buffer);
+        cwist_free(buffer);
     } else {
         cwist_sstring_assign(res->body, "");
     }
@@ -737,7 +738,7 @@ int cwist_make_socket_ipv4(struct sockaddr_in *sockv4, const char *address, uint
     cJSON_AddStringToObject(err_json, "err", "Failed to create IPv4 socket");
     char *cjson_error_log = cJSON_Print(err_json);
     perror(cjson_error_log);
-    free(cjson_error_log);
+    cwist_free(cjson_error_log);
     cJSON_Delete(err_json);
 
     return CWIST_CREATE_SOCKET_FAILED;
@@ -748,7 +749,7 @@ int cwist_make_socket_ipv4(struct sockaddr_in *sockv4, const char *address, uint
     cJSON_AddStringToObject(err_json, "err", "Failed to set up IPv4 socket options");
     char *cjson_error_log = cJSON_Print(err_json);
     perror(cjson_error_log);
-    free(cjson_error_log);
+    cwist_free(cjson_error_log);
     cJSON_Delete(err_json);
 
     return CWIST_HTTP_SETSOCKOPT_FAILED;  
@@ -769,7 +770,7 @@ int cwist_make_socket_ipv4(struct sockaddr_in *sockv4, const char *address, uint
     cJSON_AddStringToObject(err_json, "err", "Failed to bind IPv4 socket");
     char *cjson_error_log = cJSON_Print(err_json);
     perror(cjson_error_log);
-    free(cjson_error_log);
+    cwist_free(cjson_error_log);
     cJSON_Delete(err_json);
 
     return CWIST_HTTP_BIND_FAILED;
@@ -784,7 +785,7 @@ int cwist_make_socket_ipv4(struct sockaddr_in *sockv4, const char *address, uint
     cJSON_AddStringToObject(err_json, "err", err_msg);
     char *cjson_error_log = cJSON_Print(err_json);
     perror(cjson_error_log);
-    free(cjson_error_log);
+    cwist_free(cjson_error_log);
     cJSON_Delete(err_json);
 
     return CWIST_HTTP_LISTEN_FAILED;
@@ -804,7 +805,7 @@ static void *thread_handler(void *arg) {
     int client_fd = payload->client_fd;
     void (*handler_func)(int, void *) = payload->handler_func;
     void *ctx = payload->ctx;
-    free(payload);
+    cwist_free(payload);
     handler_func(client_fd, ctx);
     return NULL;
 }
@@ -876,7 +877,7 @@ cwist_error_t cwist_http_server_loop(int server_fd, cwist_server_config *config,
                 return err;
             }
             pthread_t thread;
-            struct thread_payload *payload = malloc(sizeof(*payload));
+            struct thread_payload *payload = cwist_alloc(sizeof(*payload));
             if (!payload) {
                 close(client_fd);
                 continue;
@@ -887,7 +888,7 @@ cwist_error_t cwist_http_server_loop(int server_fd, cwist_server_config *config,
             if (pthread_create(&thread, NULL, thread_handler, payload) == 0) {
                 pthread_detach(thread);
             } else {
-                free(payload);
+                cwist_free(payload);
                 close(client_fd);
             }
         }

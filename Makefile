@@ -48,6 +48,7 @@ SRCS = src/core/sstring/sstring.c \
        src/core/html/builder.c \
        src/sys/app/big_dumb_reply.c \
        src/sys/sys_info.c \
+       src/core/mem/alloc.c \
        lib/sqlite3/sqlite3.c \
        $(IO_SRC)
 

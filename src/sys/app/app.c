@@ -5,6 +5,7 @@
 #include <cwist/net/http/https.h>
 #include <cwist/core/sstring/sstring.h>
 #include <cwist/core/db/nuke_db.h>
+#include <cwist/core/mem/alloc.h>
 #include <cwist/core/utils/json_builder.h> // Helper included for apps, though not strictly used here yet
 #include <stdlib.h>
 #include <stdio.h>
@@ -45,7 +46,7 @@ static cwist_file_t *cwist_mem_claim_entry(cwist_fix_server_mem *mem) {
     if (!mem) return NULL;
     if (mem->file_count >= mem->files_capacity) {
         size_t new_cap = mem->files_capacity == 0 ? 16 : mem->files_capacity * 2;
-        cwist_file_t *new_files = realloc(mem->files, new_cap * sizeof(cwist_file_t));
+        cwist_file_t *new_files = cwist_realloc(mem->files, new_cap * sizeof(cwist_file_t));
         if (!new_files) {
             return NULL;
         }
@@ -108,7 +109,7 @@ static void cwist_mem_release_node_delayed(cwist_fix_server_mem *mem, ttak_mem_n
 
 static bool cwist_mem_attach_entry(cwist_fix_server_mem *mem, cwist_file_t *entry, const char *fs_path, const struct stat *st, void *data, ttak_mem_node_t *node) {
     if (!mem || !entry || !fs_path || !st) return false;
-    char *path_copy = strdup(fs_path);
+    char *path_copy = cwist_strdup(fs_path);
     if (!path_copy) {
         ttak_mem_tree_remove(&mem->file_tree, node);
         return false;
@@ -246,9 +247,9 @@ static size_t cwist_route_hash(cwist_http_method_t method, const char *path, siz
 }
 
 static cwist_route_entry *cwist_route_entry_create(const char *path, cwist_http_method_t method, cwist_handler_func handler, cwist_ws_handler_func ws_handler) {
-    cwist_route_entry *entry = (cwist_route_entry *)malloc(sizeof(cwist_route_entry));
+    cwist_route_entry *entry = (cwist_route_entry *)cwist_alloc(sizeof(cwist_route_entry));
     if (!entry) return NULL;
-    entry->path = strdup(path ? path : "/");
+    entry->path = cwist_strdup(path ? path : "/");
     entry->method = method;
     entry->handler = handler;
     entry->ws_handler = ws_handler;
@@ -259,17 +260,17 @@ static cwist_route_entry *cwist_route_entry_create(const char *path, cwist_http_
 
 static void cwist_route_entry_free(cwist_route_entry *entry) {
     if (!entry) return;
-    free(entry->path);
-    free(entry);
+    cwist_free(entry->path);
+    cwist_free(entry);
 }
 
 static cwist_route_table *cwist_route_table_create(void) {
-    cwist_route_table *table = (cwist_route_table *)malloc(sizeof(cwist_route_table));
+    cwist_route_table *table = (cwist_route_table *)cwist_alloc(sizeof(cwist_route_table));
     if (!table) return NULL;
     table->bucket_count = CWIST_ROUTE_BUCKETS;
-    table->buckets = (cwist_route_entry **)calloc(table->bucket_count, sizeof(cwist_route_entry *));
+    table->buckets = (cwist_route_entry **)cwist_alloc_array(table->bucket_count, sizeof(cwist_route_entry *));
     if (!table->buckets) {
-        free(table);
+        cwist_free(table);
         return NULL;
     }
     table->param_routes = NULL;
@@ -286,7 +287,7 @@ static void cwist_route_table_destroy(cwist_route_table *table) {
             curr = next;
         }
     }
-    free(table->buckets);
+    cwist_free(table->buckets);
 
     cwist_route_entry *param = table->param_routes;
     while (param) {
@@ -294,7 +295,7 @@ static void cwist_route_table_destroy(cwist_route_table *table) {
         cwist_route_entry_free(param);
         param = next;
     }
-    free(table);
+    cwist_free(table);
 }
 
 static void cwist_route_table_insert(cwist_route_table *table, const char *path, cwist_http_method_t method, cwist_handler_func handler, cwist_ws_handler_func ws_handler) {
@@ -483,7 +484,7 @@ static void cwist_scan_recursive(const char *fs_root, size_t *total_size, cwist_
 static void cwist_mem_init(cwist_app *app) {
     if (!app || !app->static_dirs) return;
     
-    app->mem_manager = calloc(1, sizeof(cwist_fix_server_mem));
+    app->mem_manager = cwist_alloc(sizeof(cwist_fix_server_mem));
     app->mem_manager->check_interval_ms = 2000; 
     pthread_mutex_init(&app->mem_manager->lock, NULL);
     app->mem_manager->retire_grace_ns = CWIST_STATIC_RETIRE_NS;
@@ -552,12 +553,12 @@ static cwist_file_t *cwist_mem_get_file(cwist_fix_server_mem *mem, const char *f
 
 static char *cwist_normalize_prefix(const char *prefix) {
     if (!prefix || prefix[0] == '\0') {
-        return strdup("/");
+        return cwist_strdup("/");
     }
 
     size_t len = strlen(prefix);
     bool needs_leading_slash = prefix[0] != '/';
-    char *buffer = (char *)malloc(len + needs_leading_slash + 1);
+    char *buffer = (char *)cwist_alloc(len + needs_leading_slash + 1);
     if (!buffer) {
         return NULL;
     }
@@ -580,13 +581,13 @@ static char *cwist_normalize_prefix(const char *prefix) {
 
 static char *cwist_normalize_directory(const char *directory) {
     if (!directory || directory[0] == '\0') {
-        return strdup(".");
+        return cwist_strdup(".");
     }
     size_t len = strlen(directory);
     while (len > 1 && directory[len - 1] == '/') {
         len--;
     }
-    char *copy = (char *)malloc(len + 1);
+    char *copy = (char *)cwist_alloc(len + 1);
     if (!copy) return NULL;
     memcpy(copy, directory, len);
     copy[len] = '\0';
@@ -690,7 +691,7 @@ static void cwist_static_handler(cwist_http_request *req, cwist_http_response *r
 #include <errno.h>
 
 cwist_app *cwist_app_create(void) {
-    cwist_app *app = (cwist_app *)malloc(sizeof(cwist_app));
+    cwist_app *app = (cwist_app *)cwist_alloc(sizeof(cwist_app));
     if (!app) return NULL;
     
     app->port = 8080;
@@ -699,7 +700,7 @@ cwist_app *cwist_app_create(void) {
     app->key_path = NULL;
     app->router = cwist_route_table_create();
     if (!app->router) {
-        free(app);
+        cwist_free(app);
         return NULL;
     }
     app->middlewares = NULL;
@@ -718,7 +719,7 @@ cwist_app *cwist_app_create(void) {
 
 void cwist_app_use(cwist_app *app, cwist_middleware_func mw) {
     if (!app || !mw) return;
-    cwist_middleware_node *node = malloc(sizeof(cwist_middleware_node));
+    cwist_middleware_node *node = cwist_alloc(sizeof(cwist_middleware_node));
     node->func = mw;
     node->next = NULL;
 
@@ -741,8 +742,8 @@ void cwist_app_set_error_handler(cwist_app *app, cwist_error_handler_func handle
 
 void cwist_app_destroy(cwist_app *app) {
     if (!app) return;
-    if (app->cert_path) free(app->cert_path);
-    if (app->key_path) free(app->key_path);
+    if (app->cert_path) cwist_free(app->cert_path);
+    if (app->key_path) cwist_free(app->key_path);
     if (app->ssl_ctx) cwist_https_destroy_context(app->ssl_ctx);
 
     cwist_route_table_destroy(app->router);
@@ -750,16 +751,16 @@ void cwist_app_destroy(cwist_app *app) {
     cwist_middleware_node *curr_m = app->middlewares;
     while (curr_m) {
         cwist_middleware_node *next = curr_m->next;
-        free(curr_m);
+        cwist_free(curr_m);
         curr_m = next;
     }
 
     cwist_static_dir *curr_s = app->static_dirs;
     while (curr_s) {
         cwist_static_dir *next = curr_s->next;
-        free(curr_s->url_prefix);
-        free(curr_s->fs_root);
-        free(curr_s);
+        cwist_free(curr_s->url_prefix);
+        cwist_free(curr_s->fs_root);
+        cwist_free(curr_s);
         curr_s = next;
     }
 
@@ -773,8 +774,8 @@ void cwist_app_destroy(cwist_app *app) {
         pthread_mutex_destroy(&app->mem_manager->lock);
         
         for (size_t i = 0; i < app->mem_manager->file_count; i++) {
-            free(app->mem_manager->files[i].path);
-            free(app->mem_manager->files[i].fs_path);
+            cwist_free(app->mem_manager->files[i].path);
+            cwist_free(app->mem_manager->files[i].fs_path);
         }
         for (size_t i = 0; i < app->mem_manager->file_count; i++) {
             if (app->mem_manager->files[i].node) {
@@ -782,9 +783,9 @@ void cwist_app_destroy(cwist_app *app) {
                 app->mem_manager->files[i].node = NULL;
             }
         }
-        free(app->mem_manager->files);
+        cwist_free(app->mem_manager->files);
         ttak_mem_tree_destroy(&app->mem_manager->file_tree);
-        free(app->mem_manager);
+        cwist_free(app->mem_manager);
     }
     
     if (app->bdr_ctx) {
@@ -805,16 +806,17 @@ void cwist_app_destroy(cwist_app *app) {
         // Based on cwist_db_close implementation, it calls sqlite3_close.
         if (app->nuke_enabled) {
              // Just free the wrapper, don't close the conn as Nuke already did it.
-             free(app->db);
+             ttak_mem_free(app->db);
         } else {
              cwist_db_close(app->db);
         }
+        app->db = NULL;
     }
     if (app->db_path) {
-        free(app->db_path);
+        cwist_free(app->db_path);
     }
     
-    free(app);
+    cwist_free(app);
 }
 
 static void mw_next_wrapper(cwist_http_request *req, cwist_http_response *res) {
@@ -846,8 +848,8 @@ cwist_error_t cwist_app_use_https(cwist_app *app, const char *cert_path, const c
     }
 
     app->use_ssl = true;
-    app->cert_path = strdup(cert_path);
-    app->key_path = strdup(key_path);
+    app->cert_path = cwist_strdup(cert_path);
+    app->key_path = cwist_strdup(key_path);
 
     return cwist_https_init_context(&app->ssl_ctx, cert_path, key_path);
 }
@@ -869,11 +871,11 @@ cwist_error_t cwist_app_use_db(cwist_app *app, const char *db_path) {
         cwist_db_close(app->db);
     }
     if (app->db_path) {
-        free(app->db_path);
+        cwist_free(app->db_path);
     }
 
     app->db = db;
-    app->db_path = strdup(db_path);
+    app->db_path = cwist_strdup(db_path);
     app->nuke_enabled = false;
     return err;
 }
@@ -891,16 +893,29 @@ cwist_error_t cwist_app_use_nuke_db(cwist_app *app, const char *db_path, int syn
     }
 
     if (app->db) {
-        if (app->nuke_enabled) free(app->db);
+        if (app->nuke_enabled) ttak_mem_free(app->db);
         else cwist_db_close(app->db);
+        app->db = NULL;
     }
     if (app->db_path) {
-        free(app->db_path);
+        cwist_free(app->db_path);
     }
 
-    app->db = (cwist_db *)malloc(sizeof(cwist_db));
+    app->db = (cwist_db *)ttak_mem_alloc_safe(sizeof(cwist_db),
+                                              __TTAK_UNSAFE_MEM_FOREVER__,
+                                              cwist_mem_now(),
+                                              false,
+                                              false,
+                                              true,
+                                              true,
+                                              TTAK_MEM_DEFAULT);
+    if (!app->db) {
+        cwist_nuke_close();
+        err.error.err_i16 = -1;
+        return err;
+    }
     app->db->conn = cwist_nuke_get_db();
-    app->db_path = strdup(db_path);
+    app->db_path = cwist_strdup(db_path);
     app->nuke_enabled = true;
 
     err.error.err_i16 = 0;
@@ -927,15 +942,15 @@ cwist_error_t cwist_app_static(cwist_app *app, const char *url_prefix, const cha
 
     char *resolved = cwist_normalize_directory(directory);
     if (!resolved) {
-        free(normalized);
+        cwist_free(normalized);
         err.error.err_i16 = -1;
         return err;
     }
 
-    cwist_static_dir *entry = (cwist_static_dir *)malloc(sizeof(cwist_static_dir));
+    cwist_static_dir *entry = (cwist_static_dir *)cwist_alloc(sizeof(cwist_static_dir));
     if (!entry) {
-        free(normalized);
-        free(resolved);
+        cwist_free(normalized);
+        cwist_free(resolved);
         err.error.err_i16 = -1;
         return err;
     }
@@ -1058,7 +1073,7 @@ static void static_ssl_handler(cwist_https_connection *conn, void *ctx) {
 
 static void static_http_handler(int client_fd, void *ctx) {
     cwist_app *app = (cwist_app *)ctx;
-    char *read_buf = malloc(CWIST_HTTP_READ_BUFFER_SIZE);
+    char *read_buf = cwist_alloc(CWIST_HTTP_READ_BUFFER_SIZE);
     if (!read_buf) {
         close(client_fd);
         return;
@@ -1139,7 +1154,7 @@ static void static_http_handler(int client_fd, void *ctx) {
         }
     }
     
-    free(read_buf);
+    cwist_free(read_buf);
     close(client_fd);
 }
 

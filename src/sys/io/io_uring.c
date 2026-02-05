@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include <cwist/sys/io/cwist_io.h>
+#include <cwist/core/mem/alloc.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -56,14 +57,14 @@ struct cwist_io_queue {
 };
 
 cwist_io_queue *cwist_io_queue_create(size_t capacity) {
-    cwist_io_queue *q = calloc(1, sizeof(cwist_io_queue));
+    cwist_io_queue *q = cwist_alloc(sizeof(cwist_io_queue));
     if (!q) return NULL;
 
     q->params.flags = 0;
     q->ring_fd = sys_io_uring_setup(capacity, &q->params);
     if (q->ring_fd < 0) {
         perror("io_uring_setup");
-        free(q);
+        cwist_free(q);
         return NULL;
     }
 
@@ -94,7 +95,7 @@ cwist_io_queue *cwist_io_queue_create(size_t capacity) {
 
 err:
     perror("io_uring mmap");
-    free(q);
+    cwist_free(q);
     return NULL;
 }
 
@@ -121,7 +122,7 @@ bool cwist_io_queue_submit(cwist_io_queue *q, cwist_job_func func, void *arg) {
     // Or simpler: We treat this "Job Queue" as an event loop.
     // But io_uring is async.
     
-    struct job_wrapper *wrapper = malloc(sizeof(struct job_wrapper));
+    struct job_wrapper *wrapper = cwist_alloc(sizeof(struct job_wrapper));
     wrapper->func = func;
     wrapper->arg = arg;
 
@@ -157,7 +158,7 @@ void cwist_io_queue_run(cwist_io_queue *q) {
             struct job_wrapper *job = (struct job_wrapper *)(uintptr_t)cqe->user_data;
             if (job) {
                 job->func(job->arg);
-                free(job);
+                cwist_free(job);
             }
             head++;
             *q->cring_head = head;
@@ -169,6 +170,6 @@ void cwist_io_queue_run(cwist_io_queue *q) {
 void cwist_io_queue_destroy(cwist_io_queue *q) {
     if (q) {
         close(q->ring_fd);
-        free(q);
+        cwist_free(q);
     }
 }
