@@ -805,7 +805,7 @@ static void *thread_handler(void *arg) {
     int client_fd = payload->client_fd;
     void (*handler_func)(int, void *) = payload->handler_func;
     void *ctx = payload->ctx;
-    cwist_free(payload);
+    free(payload);
     handler_func(client_fd, ctx);
     return NULL;
 }
@@ -877,7 +877,7 @@ cwist_error_t cwist_http_server_loop(int server_fd, cwist_server_config *config,
                 return err;
             }
             pthread_t thread;
-            struct thread_payload *payload = cwist_alloc(sizeof(*payload));
+            struct thread_payload *payload = malloc(sizeof(*payload));
             if (!payload) {
                 close(client_fd);
                 continue;
@@ -888,7 +888,7 @@ cwist_error_t cwist_http_server_loop(int server_fd, cwist_server_config *config,
             if (pthread_create(&thread, NULL, thread_handler, payload) == 0) {
                 pthread_detach(thread);
             } else {
-                cwist_free(payload);
+                free(payload);
                 close(client_fd);
             }
         }

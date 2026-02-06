@@ -2,6 +2,17 @@
 #define __CWIST_CORE_MEM_ALLOC_H__
 
 #include <stddef.h>
+#include <ttak/mem/owner.h>
+
+/**
+ * @brief Lazily create (or return) the shared CWIST owner context.
+ */
+ttak_owner_t *cwist_create_owner(void);
+
+/**
+ * @brief Allocate zeroed memory via the CWIST owner context.
+ */
+void *cwist_malloc(size_t size);
 
 /**
  * @brief Allocate zeroed memory tracked by libttak.

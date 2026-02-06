@@ -7,6 +7,7 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
 #include <errno.h>
@@ -317,7 +318,7 @@ static void *https_thread_handler(void *arg) {
         close(payload->client_fd);
     }
     
-    cwist_free(payload);
+    free(payload);
     return NULL;
 }
 
@@ -339,7 +340,7 @@ cwist_error_t cwist_https_server_loop(int server_fd, cwist_https_context *ctx, v
         }
 
         pthread_t thread;
-        struct https_thread_payload *payload = cwist_alloc(sizeof(*payload));
+        struct https_thread_payload *payload = malloc(sizeof(*payload));
         if (!payload) {
             close(client_fd);
             continue;
@@ -352,7 +353,7 @@ cwist_error_t cwist_https_server_loop(int server_fd, cwist_https_context *ctx, v
         if (pthread_create(&thread, NULL, https_thread_handler, payload) == 0) {
             pthread_detach(thread);
         } else {
-            cwist_free(payload);
+            free(payload);
             close(client_fd);
         }
     }
