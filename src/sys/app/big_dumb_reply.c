@@ -8,12 +8,114 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <limits.h>
 
 #define BDR_BUCKETS 1024
+#define BDR_GC_SWEEP 8
+#define BDR_DEFAULT_MAX_BYTES CWIST_MIB(32)
+#define BDR_DEFAULT_ENTRY_TTL 300
+#define BDR_DEFAULT_REVALIDATE_HITS 100000
 
 // SipHash key for BDR (Hardcoded or random at startup)
 static const uint8_t BDR_KEY[16] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
                                     0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f};
+
+static void bdr_release_blob(cwist_bdr_t *bdr, bdr_entry_t *entry) {
+    if (!entry || !entry->response_blob) return;
+    if (bdr) {
+        if (bdr->current_bytes >= entry->len) {
+            bdr->current_bytes -= entry->len;
+        } else {
+            bdr->current_bytes = 0;
+        }
+    }
+    cwist_free(entry->response_blob);
+    entry->response_blob = NULL;
+    entry->len = 0;
+}
+
+static void bdr_remove_entry(cwist_bdr_t *bdr, size_t idx, bdr_entry_t *prev, bdr_entry_t *entry) {
+    if (!bdr || !entry || idx >= bdr->bucket_count) return;
+    bdr_release_blob(bdr, entry);
+    if (prev) {
+        prev->next = entry->next;
+    } else {
+        bdr->buckets[idx] = entry->next;
+    }
+    cwist_free(entry);
+}
+
+static bool bdr_entry_should_decay(const cwist_bdr_t *bdr, const bdr_entry_t *entry, time_t now) {
+    if (!bdr || !entry) return false;
+    if (bdr->max_entry_age_sec > 0 && entry->created_at > 0) {
+        if (now - entry->created_at > bdr->max_entry_age_sec) {
+            return true;
+        }
+    }
+    if (entry->is_stable && bdr->revalidate_hits > 0 && entry->hits >= bdr->revalidate_hits) {
+        return true;
+    }
+    return false;
+}
+
+static bool bdr_trim_oldest(cwist_bdr_t *bdr, time_t now) {
+    if (!bdr) return false;
+    size_t victim_idx = SIZE_MAX;
+    bdr_entry_t *victim = NULL;
+    bdr_entry_t *victim_prev = NULL;
+    time_t oldest = now;
+
+    for (size_t i = 0; i < bdr->bucket_count; ++i) {
+        bdr_entry_t *prev = NULL;
+        bdr_entry_t *curr = bdr->buckets[i];
+        while (curr) {
+            if (curr->response_blob && (!victim || curr->created_at < oldest)) {
+                victim = curr;
+                victim_prev = prev;
+                victim_idx = i;
+                oldest = curr->created_at;
+            }
+            prev = curr;
+            curr = curr->next;
+        }
+    }
+
+    if (!victim || victim_idx == SIZE_MAX) return false;
+    bdr_remove_entry(bdr, victim_idx, victim_prev, victim);
+    return true;
+}
+
+static void bdr_sweep(cwist_bdr_t *bdr, size_t steps) {
+    if (!bdr || bdr->bucket_count == 0 || steps == 0) return;
+    time_t now = time(NULL);
+    for (size_t i = 0; i < steps; ++i) {
+        size_t idx = bdr->gc_cursor % bdr->bucket_count;
+        bdr->gc_cursor = (bdr->gc_cursor + 1) % bdr->bucket_count;
+        bdr_entry_t *prev = NULL;
+        bdr_entry_t *curr = bdr->buckets[idx];
+        while (curr) {
+            if (bdr_entry_should_decay(bdr, curr, now)) {
+                bdr_entry_t *victim = curr;
+                curr = curr->next;
+                bdr_remove_entry(bdr, idx, prev, victim);
+                continue;
+            }
+            prev = curr;
+            curr = curr->next;
+        }
+    }
+}
+
+static void bdr_guardrails(cwist_bdr_t *bdr) {
+    if (!bdr) return;
+    bdr_sweep(bdr, BDR_GC_SWEEP);
+
+    if (bdr->max_bytes == 0) return;
+    time_t now = time(NULL);
+    while (bdr->current_bytes > bdr->max_bytes) {
+        if (!bdr_trim_oldest(bdr, now)) break;
+    }
+}
 
 cwist_bdr_t *cwist_bdr_create(void) {
     cwist_bdr_t *bdr = cwist_alloc(sizeof(cwist_bdr_t));
@@ -21,6 +123,11 @@ cwist_bdr_t *cwist_bdr_create(void) {
     bdr->bucket_count = BDR_BUCKETS;
     bdr->buckets = cwist_alloc_array(BDR_BUCKETS, sizeof(bdr_entry_t *));
     bdr->latency_threshold_ms = 10; 
+    bdr->current_bytes = 0;
+    bdr->max_bytes = BDR_DEFAULT_MAX_BYTES;
+    bdr->max_entry_age_sec = BDR_DEFAULT_ENTRY_TTL;
+    bdr->revalidate_hits = BDR_DEFAULT_REVALIDATE_HITS;
+    bdr->gc_cursor = 0;
     bdr->disk_db = NULL;
     bdr->is_disk_mode = false;
     return bdr;
@@ -32,7 +139,7 @@ void cwist_bdr_destroy(cwist_bdr_t *bdr) {
         bdr_entry_t *curr = bdr->buckets[i];
         while (curr) {
             bdr_entry_t *next = curr->next;
-            cwist_free(curr->response_blob);
+            bdr_release_blob(bdr, curr);
             cwist_free(curr);
             curr = next;
         }
@@ -79,7 +186,7 @@ static void bdr_check_ram(cwist_bdr_t *bdr) {
                     
                     // Free memory
                     bdr_entry_t *next = curr->next;
-                    cwist_free(curr->response_blob);
+                    bdr_release_blob(bdr, curr);
                     cwist_free(curr);
                     curr = next;
                 }
@@ -129,6 +236,7 @@ const void *cwist_bdr_get(cwist_bdr_t *bdr, const char *method, const char *path
 
     size_t idx = h % bdr->bucket_count;
 
+    bdr_entry_t *prev = NULL;
     bdr_entry_t *curr = bdr->buckets[idx];
 
     while (curr) {
@@ -136,6 +244,11 @@ const void *cwist_bdr_get(cwist_bdr_t *bdr, const char *method, const char *path
         if (curr->request_hash == h) {
 
             curr->hits++;
+
+            if (bdr_entry_should_decay(bdr, curr, time(NULL))) {
+                bdr_remove_entry(bdr, idx, prev, curr);
+                return NULL;
+            }
 
             if (curr->is_stable && curr->response_blob) {
 
@@ -149,6 +262,7 @@ const void *cwist_bdr_get(cwist_bdr_t *bdr, const char *method, const char *path
 
         }
 
+        prev = curr;
         curr = curr->next;
 
     }
@@ -201,6 +315,8 @@ void cwist_bdr_put(cwist_bdr_t *bdr, const char *method, const char *path, const
 
          sqlite3_finalize(stmt);
 
+         bdr_guardrails(bdr);
+
          return;
 
     }
@@ -243,11 +359,13 @@ void cwist_bdr_put(cwist_bdr_t *bdr, const char *method, const char *path, const
 
                     curr->is_stable = false;
 
-                    cwist_free(curr->response_blob);
+                    curr->hits = 0;
 
-                    curr->response_blob = NULL;
+                    bdr_release_blob(bdr, curr);
 
                     curr->response_hash = res_h; // New candidate
+
+                    curr->created_at = time(NULL);
 
                 }
 
@@ -259,15 +377,27 @@ void cwist_bdr_put(cwist_bdr_t *bdr, const char *method, const char *path, const
 
                     // Match! Stabilize.
 
-                    curr->response_blob = cwist_alloc(len);
+                    void *blob = cwist_alloc(len);
 
-                    if (curr->response_blob) {
+                    if (blob) {
 
-                        memcpy(curr->response_blob, data, len);
+                        memcpy(blob, data, len);
+
+                        bdr_release_blob(bdr, curr);
+
+                        curr->response_blob = blob;
 
                         curr->len = len;
 
                         curr->is_stable = true;
+
+                        curr->hits = 0;
+
+                        curr->created_at = time(NULL);
+
+                        bdr->current_bytes += len;
+
+                        bdr_guardrails(bdr);
 
                         // printf("[BDR] Stabilized: %s\n", path);
 
@@ -320,5 +450,33 @@ void cwist_bdr_put(cwist_bdr_t *bdr, const char *method, const char *path, const
     entry->next = bdr->buckets[idx];
 
     bdr->buckets[idx] = entry;
+
+    bdr_guardrails(bdr);
+
+}
+
+void cwist_bdr_set_limits(cwist_bdr_t *bdr, size_t max_bytes, time_t max_entry_age_sec, uint64_t revalidate_hits) {
+
+    if (!bdr) return;
+
+    if (max_bytes > 0) {
+
+        bdr->max_bytes = max_bytes;
+
+    }
+
+    if (max_entry_age_sec > 0) {
+
+        bdr->max_entry_age_sec = max_entry_age_sec;
+
+    }
+
+    if (revalidate_hits > 0) {
+
+        bdr->revalidate_hits = revalidate_hits;
+
+    }
+
+    bdr_guardrails(bdr);
 
 }

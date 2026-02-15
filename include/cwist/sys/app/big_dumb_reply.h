@@ -38,11 +38,17 @@ typedef struct cwist_bdr_t {
     bdr_entry_t **buckets;     ///< Hash buckets
     size_t bucket_count;       ///< Number of buckets
     
-    // Learning Config
+    /// Learning configuration parameters.
     int hit_threshold;         ///< (Unused) Hits before caching
     int latency_threshold_ms;  ///< Latency threshold to trigger caching
+
+    size_t current_bytes;      ///< Total bytes stored in-memory
+    size_t max_bytes;          ///< Soft limit for cached response bytes
+    time_t max_entry_age_sec;  ///< TTL for cached replies (0 = no TTL)
+    uint64_t revalidate_hits;  ///< Force refresh after this many hits
+    size_t gc_cursor;          ///< Round-robin sweep cursor
     
-    // Fallback Disk DB
+    /// Fallback disk database mode.
     struct sqlite3 *disk_db;   ///< Disk DB handle for low-RAM mode
     bool is_disk_mode;         ///< True if fallback is active
 } cwist_bdr_t;
@@ -76,5 +82,14 @@ const void *cwist_bdr_get(cwist_bdr_t *bdr, const char *method, const char *path
  * @param len Length of data.
  */
 void cwist_bdr_put(cwist_bdr_t *bdr, const char *method, const char *path, const void *data, size_t len);
+
+/**
+ * @brief Adjusts guard-rail policies for the in-memory cache.
+ * @param bdr Context.
+ * @param max_bytes Maximum bytes to keep in RAM (0 keeps default).
+ * @param max_entry_age_sec Time-to-live for cached entries (<=0 keeps default).
+ * @param revalidate_hits Force relearning after this many hits (0 keeps default).
+ */
+void cwist_bdr_set_limits(cwist_bdr_t *bdr, size_t max_bytes, time_t max_entry_age_sec, uint64_t revalidate_hits);
 
 #endif

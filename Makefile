@@ -1,7 +1,7 @@
 # Compiler and Flags
 CC = gcc
-CFLAGS = -I./include -I./lib -I./lib/cjson -I./lib/sqlite3 -Wall -Wextra -pthread -g -D_GNU_SOURCE -O3 -DSQLITE_ENABLE_DESERIALIZE
-LIBS = -pthread -lcjson -lssl -lcrypto -luriparser -ldl -lttak
+CFLAGS = -I./include -I./lib -I./lib/libttak/include -I./lib/cjson -I./lib/sqlite3 -Wall -Wextra -pthread -g -D_GNU_SOURCE -O3 -DSQLITE_ENABLE_DESERIALIZE
+LIBS = -L./lib/libttak/lib -pthread -lcjson -lssl -lcrypto -luriparser -ldl -lttak
 
 # SQLite Automation
 SQLITE_YEAR = 2024
@@ -55,6 +55,8 @@ SRCS = src/core/sstring/sstring.c \
 # Object Files and Target
 OBJS = $(SRCS:.c=.o)
 LIB_NAME = libcwist.a
+LIBTTAK_DIR = lib/libttak
+LIBTTAK_LIB = $(LIBTTAK_DIR)/lib/libttak.a
 
 # Installation Paths
 PREFIX ?= /usr/local
@@ -63,7 +65,7 @@ INCLUDEDIR = $(PREFIX)/include
 
 # --- Build Targets ---
 
-all: $(SQLITE_DIR)/sqlite3.c $(LIB_NAME)
+all: $(LIBTTAK_LIB) $(SQLITE_DIR)/sqlite3.c $(LIB_NAME)
 
 # SQLite Download & Extraction Rule
 $(SQLITE_DIR)/sqlite3.c:
@@ -78,6 +80,10 @@ $(SQLITE_DIR)/sqlite3.c:
 $(LIB_NAME): $(OBJS)
 	@echo "Creating static library..."
 	ar rcs $@ $^
+
+$(LIBTTAK_LIB):
+	@echo "Building libttak..."
+	$(MAKE) -C $(LIBTTAK_DIR)
 
 # --- Test Targets ---
 
@@ -114,5 +120,6 @@ clean:
 	rm -f $(OBJS) $(LIB_NAME)
 	rm -rf include/cwist/vendor
 	rm -f test_sstring test_http test_siphash test_mux stress_test test_cors test_websocket
+	@$(MAKE) -C $(LIBTTAK_DIR) clean
 
 rebuild: clean all

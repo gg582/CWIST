@@ -13,6 +13,7 @@
 #include <errno.h>
 #include <poll.h>
 #include <signal.h>
+#include <time.h>
 
 #include <sys/types.h>
 #include <unistd.h>
@@ -794,6 +795,46 @@ int cwist_make_socket_ipv4(struct sockaddr_in *sockv4, const char *address, uint
   return server_fd;
 }
 
+static bool cwist_accept_error_should_retry(int err) {
+    switch (err) {
+        case EINTR:
+        case EAGAIN:
+        case ECONNABORTED:
+#ifdef ECONNRESET
+        case ECONNRESET:
+#endif
+#ifdef EPROTO
+        case EPROTO:
+#endif
+            return true;
+        case EMFILE:
+        case ENFILE:
+        case ENOBUFS:
+        case ENOMEM:
+            return true;
+        default:
+            return false;
+    }
+}
+
+static void cwist_accept_error_backoff(int err) {
+    switch (err) {
+        case EMFILE:
+        case ENFILE:
+        case ENOBUFS:
+        case ENOMEM: {
+            fprintf(stderr, "[CWIST] accept() backoff triggered: %s\n", strerror(err));
+            struct timespec ts;
+            ts.tv_sec = 0;
+            ts.tv_nsec = 50 * 1000 * 1000; // 50ms
+            nanosleep(&ts, NULL);
+            break;
+        }
+        default:
+            break;
+    }
+}
+
 struct thread_payload {
     int client_fd;
     void (*handler_func)(int, void *);
@@ -860,7 +901,11 @@ cwist_error_t cwist_http_server_loop(int server_fd, cwist_server_config *config,
         while (true) {
             int client_fd = accept(server_fd, NULL, NULL);
             if (client_fd < 0) {
-                if (errno == EINTR) continue;
+                int accept_err = errno;
+                if (cwist_accept_error_should_retry(accept_err)) {
+                    cwist_accept_error_backoff(accept_err);
+                    continue;
+                }
                 err.error.err_i16 = -1;
                 return err;
             }
@@ -872,7 +917,11 @@ cwist_error_t cwist_http_server_loop(int server_fd, cwist_server_config *config,
         while (true) {
             int client_fd = accept(server_fd, NULL, NULL);
             if (client_fd < 0) {
-                if (errno == EINTR) continue;
+                int accept_err = errno;
+                if (cwist_accept_error_should_retry(accept_err)) {
+                    cwist_accept_error_backoff(accept_err);
+                    continue;
+                }
                 err.error.err_i16 = -1;
                 return err;
             }
@@ -922,6 +971,15 @@ cwist_error_t cwist_http_server_loop(int server_fd, cwist_server_config *config,
                     int client_fd = accept(server_fd, NULL, NULL);
                     if (client_fd >= 0) {
                         handler(client_fd, ctx);
+                    } else {
+                        int accept_err = errno;
+                        if (cwist_accept_error_should_retry(accept_err)) {
+                            cwist_accept_error_backoff(accept_err);
+                            continue;
+                        }
+                        err.error.err_i16 = -1;
+                        close(epoll_fd);
+                        return err;
                     }
                 }
             }
@@ -957,6 +1015,15 @@ cwist_error_t cwist_http_server_loop(int server_fd, cwist_server_config *config,
                     int client_fd = accept(server_fd, NULL, NULL);
                     if (client_fd >= 0) {
                         handler(client_fd, ctx);
+                    } else {
+                        int accept_err = errno;
+                        if (cwist_accept_error_should_retry(accept_err)) {
+                            cwist_accept_error_backoff(accept_err);
+                            continue;
+                        }
+                        err.error.err_i16 = -1;
+                        close(kqueue_fd);
+                        return err;
                     }
                 }
             }

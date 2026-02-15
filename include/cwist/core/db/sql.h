@@ -14,7 +14,7 @@ typedef struct cwist_db {
     sqlite3 *conn;
 } cwist_db;
 
-/* --- API --- */
+/** @name API */
 
 /**
  * Connect to a database (or open file).

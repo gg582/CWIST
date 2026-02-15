@@ -740,6 +740,11 @@ void cwist_app_set_error_handler(cwist_app *app, cwist_error_handler_func handle
     if (app) app->error_handler = handler;
 }
 
+void cwist_app_configure_bdr(cwist_app *app, size_t max_bytes, time_t max_entry_age_sec, uint64_t revalidate_hits) {
+    if (!app || !app->bdr_ctx) return;
+    cwist_bdr_set_limits(app->bdr_ctx, max_bytes, max_entry_age_sec, revalidate_hits);
+}
+
 void cwist_app_destroy(cwist_app *app) {
     if (!app) return;
     if (app->cert_path) cwist_free(app->cert_path);
@@ -1129,6 +1134,7 @@ static void static_http_handler(int client_fd, void *ctx) {
         uint64_t duration_ms = (end.tv_sec - start.tv_sec) * 1000 + (end.tv_nsec - start.tv_nsec) / 1000000;
 
         bool keep_alive = req->keep_alive && res->keep_alive;
+        bool upgraded = req->upgraded;
         
         if (!req->upgraded) {
             if (cwist_http_send_response(client_fd, res).error.err_i16 < 0) {
@@ -1156,7 +1162,7 @@ static void static_http_handler(int client_fd, void *ctx) {
         cwist_http_response_destroy(res);
         cwist_http_request_destroy(req);
         
-        if (!keep_alive || req->upgraded) {
+        if (!keep_alive || upgraded) {
             break;
         }
     }

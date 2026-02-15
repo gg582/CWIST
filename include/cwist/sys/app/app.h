@@ -34,7 +34,9 @@ typedef void (*cwist_ws_handler_func)(cwist_websocket *ws);
  */
 typedef void (*cwist_error_handler_func)(cwist_http_request *req, cwist_http_response *res, cwist_http_status_t status);
 
-// Middleware type: receives req, res, and the next stage in the chain
+/**
+ * @brief Middleware type that receives req/res pair and the next stage in the chain.
+ */
 typedef void (*cwist_middleware_func)(cwist_http_request *req, cwist_http_response *res, cwist_handler_func next);
 
 /**
@@ -60,20 +62,17 @@ typedef struct cwist_app {
     char *cert_path;
     char *key_path;
     
-    // Middlewares
-    cwist_middleware_node *middlewares;
+    cwist_middleware_node *middlewares; ///< Head of the middleware chain.
 
-    cwist_route_table *router;
-    cwist_static_dir *static_dirs;
+    cwist_route_table *router; ///< Router definition.
+    cwist_static_dir *static_dirs; ///< Static directory mappings.
     
-    // Error Handling
-    cwist_error_handler_func error_handler;
+    cwist_error_handler_func error_handler; ///< Error handling callback.
 
-    // Internal contexts
-    cwist_https_context *ssl_ctx;
-    cwist_db *db;
-    char *db_path;
-    bool nuke_enabled;
+    cwist_https_context *ssl_ctx; ///< SSL context when TLS is enabled.
+    cwist_db *db; ///< Shared database handle.
+    char *db_path; ///< Database path (if set).
+    bool nuke_enabled; ///< True when NUKE DB integration is active.
 
     /** @brief Max memory space for static file pool (0 = auto-detected * 2) */
     size_t max_mem_space;
@@ -84,7 +83,7 @@ typedef struct cwist_app {
     cwist_bdr_t *bdr_ctx;
 } cwist_app;
 
-// --- Memory Management ---
+/** --- Memory Management --- */
 
 /**
  * @brief Represents a file loaded into the fixed memory pool.
@@ -121,7 +120,7 @@ typedef struct cwist_fix_server_mem {
     int check_interval_ms;
 } cwist_fix_server_mem;
 
-// --- API ---
+/** --- API --- */
 
 /**
  * @brief Creates a new CWIST application instance.
@@ -142,18 +141,32 @@ void cwist_app_destroy(cwist_app *app);
  */
 void cwist_app_set_max_memspace(cwist_app *app, size_t size);
 
-// Middleware
+/** @name Middleware */
+/** @{ */
 void cwist_app_use(cwist_app *app, cwist_middleware_func mw);
+/** @} */
 
-// Error Handling Configuration
+/** @name Error Handling Configuration */
+/** @{ */
 void cwist_app_set_error_handler(cwist_app *app, cwist_error_handler_func handler);
+/** @} */
+
+/**
+ * @brief Configures the Big Dumb Reply guardrails.
+ * @param app Target app.
+ * @param max_bytes Maximum bytes to keep in RAM (0 = keep default).
+ * @param max_entry_age_sec Retire cached replies older than this (<=0 keeps default).
+ * @param revalidate_hits Force refresh after this many hits (0 = keep default).
+ */
+void cwist_app_configure_bdr(cwist_app *app, size_t max_bytes, time_t max_entry_age_sec, uint64_t revalidate_hits);
 
 cwist_error_t cwist_app_use_https(cwist_app *app, const char *cert_path, const char *key_path);
 cwist_error_t cwist_app_use_db(cwist_app *app, const char *db_path);
 cwist_error_t cwist_app_use_nuke_db(cwist_app *app, const char *db_path, int sync_interval_ms);
 cwist_db *cwist_app_get_db(cwist_app *app);
 
-// Routing
+/** @name Routing */
+/** @{ */
 /**
  * @brief Registers a GET route handler.
  */
@@ -167,11 +180,14 @@ void cwist_app_ws(cwist_app *app, const char *path, cwist_ws_handler_func handle
  * @param app Pointer to the app.
  * @param url_prefix URL prefix (e.g., "/static").
  * @param directory Local filesystem path.
+ * @note Additional method helpers can be added as needed.
  */
 cwist_error_t cwist_app_static(cwist_app *app, const char *url_prefix, const char *directory);
-// Add other methods as needed
+/** @} */
 
-// Start
+/** @name Startup */
+/** @{ */
 int cwist_app_listen(cwist_app *app, int port);
+/** @} */
 
 #endif
